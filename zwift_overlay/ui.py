@@ -1935,12 +1935,17 @@ class SensorConfigWindow:
                         else (1 if "power" in (device.sensor_type or "").lower() else 2)
                     )
                 )
-                start = self.live_probe_next_index % len(probe_candidates)
-                end = start + min(self.live_probe_batch_size, len(probe_candidates))
-                batch = probe_candidates[start:end]
-                if end > len(probe_candidates):
-                    batch.extend(probe_candidates[: end - len(probe_candidates)])
-                self.live_probe_next_index = (start + len(batch)) % len(probe_candidates)
+                if hint_values:
+                    start = self.live_probe_next_index % len(probe_candidates)
+                    end = start + min(self.live_probe_batch_size, len(probe_candidates))
+                    batch = probe_candidates[start:end]
+                    if end > len(probe_candidates):
+                        batch.extend(probe_candidates[: end - len(probe_candidates)])
+                    self.live_probe_next_index = (start + len(batch)) % len(probe_candidates)
+                else:
+                    # No active session hints: probe every discovered candidate so users can
+                    # identify the sensor that currently emits live data.
+                    batch = list(probe_candidates)
                 for device in batch:
                     if self.live_value_stop_event.is_set():
                         return
