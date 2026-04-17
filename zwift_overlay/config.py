@@ -7,11 +7,13 @@ from pathlib import Path
 
 
 def _default_config_path() -> Path:
+    project_root = Path(__file__).resolve().parent.parent
     if getattr(sys, "frozen", False):
         # Portable EXE mode: keep settings next to the executable so
         # users can extract ZIP and run with persistent local config.
         return Path(sys.executable).resolve().parent / "overlay_config.json"
-    return Path(__file__).resolve().parent.parent / "overlay_config.json"
+    # Dev mode: keep local settings out of tracked repo config.
+    return project_root / "overlay_config.local.json"
 
 
 CONFIG_PATH = _default_config_path()
@@ -64,7 +66,16 @@ class AppConfig:
 
 def load_app_config() -> AppConfig:
     if not CONFIG_PATH.exists():
-        return AppConfig()
+        if not getattr(sys, "frozen", False):
+            # One-time migration from old dev config path.
+            legacy_path = Path(__file__).resolve().parent.parent / "overlay_config.json"
+            if legacy_path.exists():
+                try:
+                    CONFIG_PATH.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
+                except Exception:
+                    pass
+        if not CONFIG_PATH.exists():
+            return AppConfig()
 
     try:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))

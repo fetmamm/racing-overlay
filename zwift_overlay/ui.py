@@ -2477,6 +2477,12 @@ class SettingsWindow:
             command=self._on_ui_scale_change,
             length=220,
         ).grid(row=4, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        ttk.Button(
+            controls_frame,
+            text="Reset",
+            command=self._reset_ui_scale,
+            width=7,
+        ).grid(row=4, column=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
 
         body = ttk.Frame(frame)
         body.pack(fill=tk.X)
@@ -2643,6 +2649,10 @@ class SettingsWindow:
 
     def _on_ui_scale_change(self, _value: str) -> None:
         self.ui_scale_label.config(text=f"UI scaler: {int(self.ui_scale_var.get())}%")
+
+    def _reset_ui_scale(self) -> None:
+        self.ui_scale_var.set(100)
+        self._on_ui_scale_change("")
 
     def _bind_canvas_mousewheel(self, canvas: tk.Canvas) -> None:
         def _on_mousewheel(event: tk.Event[tk.Misc]) -> str:

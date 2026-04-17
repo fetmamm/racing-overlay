@@ -1,8 +1,8 @@
 {
-  "rider_weight_kg": 69.0,
-  "rider_weight_input": "69",
-  "profile_name": "jesper",
-  "profile_email": "jesperr.svensson@gmail.com",
+  "rider_weight_kg": 100.0,
+  "rider_weight_input": "",
+  "profile_name": "",
+  "profile_email": "",
   "smtp_enabled": false,
   "smtp_host": "",
   "smtp_port": 587,
@@ -28,16 +28,5 @@
   "show_adjusted_wkg_column": false,
   "adjusted_wkg_percent": 90,
   "inactive_background": "#f3f3f3",
-  "sensors": {
-    "power": {
-      "name": "Wahoo KICKR 5E76",
-      "identifier": "F5:1F:45:76:6B:4A",
-      "transport": "ble"
-    },
-    "heart_rate": {
-      "name": "HRMPro+:204691",
-      "identifier": "ED:D4:7C:AF:A2:CB",
-      "transport": "ble"
-    }
-  }
+  "sensors": {}
 }
