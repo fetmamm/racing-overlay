@@ -62,10 +62,17 @@ jobs:
             const headMessage = (headCommit?.message || "").trim();
             const messageLines = headMessage ? headMessage.split("\n") : [];
             const descriptionText = messageLines.slice(1).join("\n").trim();
+            const descriptionLines = descriptionText
+              ? descriptionText
+                  .split("\n")
+                  .map((line) => line.trim())
+                  .filter((line) => line.length > 0)
+                  .map((line) => `* ${line}`)
+              : [];
             const contentParts = [
               "A new change has been made!",
               "",
-              `Push till **${branch}**`,
+              `Push to **${branch}**`,
               `Version: **${versionLabel}**`,
               `Repo: \`${repoName}\``,
               `Pusher: **${context.actor}**`,
@@ -74,8 +81,8 @@ jobs:
             if (lines.length) {
               contentParts.push("", ...lines);
             }
-            if (descriptionText) {
-              contentParts.push(descriptionText);
+            if (descriptionLines.length) {
+              contentParts.push(...descriptionLines);
             }
             if (compareUrl) {
               contentParts.push("", compareUrl);
