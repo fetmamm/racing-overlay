@@ -62,8 +62,7 @@ jobs:
             const repoName = `${context.repo.owner}/${context.repo.repo}`;
             const headMessage = (headCommit?.message || "").trim();
             const messageLines = headMessage ? headMessage.split("\n") : [];
-            const summaryText = messageLines.length ? messageLines[0] : "(none)";
-            const descriptionText = messageLines.slice(1).join("\n").trim() || "(none)";
+            const descriptionText = messageLines.slice(1).join("\n").trim();
             const contentParts = [
               "A new change has been made!",
               "",
@@ -72,15 +71,12 @@ jobs:
               `Repo: \`${repoName}\``,
               `Pusher: **${context.actor}**`,
               `Commits: **${commits.length}**`,
-              "",
-              "Summary:",
-              summaryText,
-              "",
-              "Description:",
-              descriptionText,
             ];
             if (lines.length) {
               contentParts.push("", ...lines);
+            }
+            if (descriptionText) {
+              contentParts.push("", descriptionText);
             }
             if (compareUrl) {
               contentParts.push("", compareUrl);
