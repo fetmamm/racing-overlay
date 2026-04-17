@@ -2475,7 +2475,7 @@ class SettingsWindow:
             orient=tk.HORIZONTAL,
             variable=self.ui_scale_var,
             command=self._on_ui_scale_change,
-            length=220,
+            length=110,
         ).grid(row=4, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         ttk.Button(
             controls_frame,
