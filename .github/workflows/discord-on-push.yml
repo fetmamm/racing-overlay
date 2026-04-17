@@ -34,7 +34,7 @@ jobs:
               const sha = (c.id || "").slice(0, 7);
               const message = (c.message || "").split("\n")[0];
               const author = c.author?.name || "unknown";
-              return `${sha} ${message} - ${author}`;
+              return `* \`${sha}\` ${message} - ${author}`;
             });
 
             if (commits.length > shown.length) {
@@ -60,13 +60,11 @@ jobs:
             const compareUrl = context.payload.compare || "";
             const repoName = `${context.repo.owner}/${context.repo.repo}`;
             const contentParts = [
-              "A new change has been made!",
-              "",
-              `Push to ${branch}`,
-              `Version: ${versionLabel}`,
-              `Repo: ${repoName}`,
-              `Pusher: ${context.actor}`,
-              `Commits: ${commits.length}`,
+              `Push till **${branch}**`,
+              `Version: **${versionLabel}**`,
+              `Repo: \`${repoName}\``,
+              `Pusher: **${context.actor}**`,
+              `Commits: **${commits.length}**`,
             ];
             if (lines.length) {
               contentParts.push("", ...lines);
