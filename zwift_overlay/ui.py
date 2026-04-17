@@ -32,8 +32,8 @@ from zwift_overlay.stats import TelemetryAggregator
 from zwift_overlay.version import APP_VERSION
 
 AVG_POWER_PRESET_SECONDS = [10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700, 3600]
-DISCORD_SERVER_URL = "https://discord.gg/3ARGhyAPSZ"
-CONTACT_EMAIL = "jesperr.svensson@gmail.com"
+DISCORD_SERVER_URL = os.getenv("ZWIFT_OVERLAY_DISCORD_URL", "").strip()
+CONTACT_EMAIL = os.getenv("ZWIFT_OVERLAY_CONTACT_EMAIL", "").strip()
 HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 CYCLING_POWER_MEASUREMENT_UUID = "00002a63-0000-1000-8000-00805f9b34fb"
 # App-owner managed mail service config (end users should not need to fill SMTP details).
@@ -393,7 +393,7 @@ class OverlayApp:
         self.footer_separator.pack(fill=tk.X, pady=(8, 6))
         self.footer_label = ttk.Label(
             self.main_frame,
-            text="@slangens 2026",
+            text="Zwift Overlay 2026",
             font=self.font_status,
             style="OverlayStatus.TLabel",
             justify=tk.RIGHT,
@@ -1384,7 +1384,6 @@ class OverlayApp:
         scale_percent = max(50, min(150, int(self.config.ui_scale_percent)))
         self.config.ui_scale_percent = scale_percent
         self.ui_scale_factor = scale_percent / 100
-        self.root.tk.call("tk", "scaling", self.base_tk_scaling * self.ui_scale_factor)
         self.font_title.configure(size=self._scaled_int(self.base_font_sizes["title"]))
         self.font_value.configure(size=self._scaled_int(self.base_font_sizes["value"]))
         self.font_status.configure(size=self._scaled_int(self.base_font_sizes["status"]))
@@ -1462,10 +1461,10 @@ class SensorConfigWindow:
         self.live_values_by_identifier: dict[str, str] = {}
         self.live_value_in_progress = False
         self.live_value_after_id: str | None = None
-        self.live_value_refresh_ms = 1000
+        self.live_value_refresh_ms = 2000
         self.live_value_stop_event = threading.Event()
         self.live_value_cache: dict[str, tuple[str, float]] = {}
-        self.live_value_cache_ttl_seconds = 10.0
+        self.live_value_cache_ttl_seconds = 2.5
         self.live_probe_next_index = 0
         self.live_probe_batch_size = 3
 
@@ -1953,6 +1952,9 @@ class SensorConfigWindow:
                     if value != "-":
                         values_by_identifier[device.identifier] = value
                         self.live_value_cache[device.identifier] = (value, time.monotonic())
+                    else:
+                        values_by_identifier[device.identifier] = "-"
+                        self.live_value_cache.pop(device.identifier, None)
             try:
                 self.window.after(0, lambda: self._apply_live_values(values_by_identifier))
             except tk.TclError:
@@ -2563,13 +2565,19 @@ class SettingsWindow:
 
         buttons = ttk.Frame(self.window, padding=(12, 0, 12, 12))
         buttons.pack(fill=tk.X)
-        ttk.Button(buttons, text="Save", command=self.save).pack(side=tk.LEFT)
+        self.save_button = ttk.Button(buttons, text="Save", command=self.save, state=tk.DISABLED)
+        self.save_button.pack(side=tk.LEFT)
         ttk.Button(buttons, text="Reset settings", command=self.confirm_reset_defaults).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(buttons, text="Close", command=self.window.destroy).pack(side=tk.LEFT, padx=(8, 0))
+        self._configure_settings_styles()
+        self._apply_settings_styles(self.window)
         self._toggle_adjusted_wkg_controls()
+        self._bind_change_tracking()
+        self._saved_snapshot = self._settings_snapshot()
+        self._refresh_save_button_state()
         self._ensure_above_parent()
 
-    def save(self, close_window: bool = True) -> bool:
+    def save(self, close_window: bool = False) -> bool:
         try:
             weight_input = self.weight_var.get().strip()
             if weight_input:
@@ -2632,6 +2640,8 @@ class SettingsWindow:
         self.config.adjusted_wkg_percent = adjusted_wkg_percent
         self.config.inactive_background = self.inactive_background_var.get().strip() or "#f3f3f3"
         self.on_save()
+        self._saved_snapshot = self._settings_snapshot()
+        self._refresh_save_button_state()
         if close_window:
             self.window.destroy()
         return True
@@ -2653,6 +2663,87 @@ class SettingsWindow:
     def _reset_ui_scale(self) -> None:
         self.ui_scale_var.set(100)
         self._on_ui_scale_change("")
+
+    def _bind_change_tracking(self) -> None:
+        tracked_vars: list[tk.Variable] = [
+            self.weight_var,
+            self.profile_name_var,
+            self.profile_email_var,
+            self.topmost_var,
+            self.power_display_var,
+            self.wkg_decimals_var,
+            self.delayed_start_var,
+            self.ui_scale_var,
+            self.show_custom_avg_var,
+            self.custom_avg_seconds_var,
+            self.show_session_avg_power_var,
+            self.show_avg_hr_var,
+            self.show_avg_speed_var,
+            self.show_adjusted_wkg_column_var,
+            self.adjusted_wkg_percent_var,
+            self.inactive_background_var,
+            *self.avg_power_preset_vars.values(),
+        ]
+        for variable in tracked_vars:
+            variable.trace_add("write", self._on_settings_field_changed)
+
+    def _on_settings_field_changed(self, *_args: object) -> None:
+        self._refresh_save_button_state()
+
+    def _settings_snapshot(self) -> tuple[object, ...]:
+        preset_flags = tuple(
+            (seconds, bool(var.get()))
+            for seconds, var in sorted(self.avg_power_preset_vars.items())
+        )
+        return (
+            self.weight_var.get(),
+            self.profile_name_var.get(),
+            self.profile_email_var.get(),
+            bool(self.topmost_var.get()),
+            self.power_display_var.get(),
+            self.wkg_decimals_var.get(),
+            self.delayed_start_var.get(),
+            int(self.ui_scale_var.get()),
+            bool(self.show_custom_avg_var.get()),
+            self.custom_avg_seconds_var.get(),
+            bool(self.show_session_avg_power_var.get()),
+            bool(self.show_avg_hr_var.get()),
+            bool(self.show_avg_speed_var.get()),
+            bool(self.show_adjusted_wkg_column_var.get()),
+            self.adjusted_wkg_percent_var.get(),
+            self.inactive_background_var.get(),
+            preset_flags,
+        )
+
+    def _refresh_save_button_state(self) -> None:
+        is_dirty = self._settings_snapshot() != self._saved_snapshot
+        self.save_button.configure(state=tk.NORMAL if is_dirty else tk.DISABLED)
+
+    def _configure_settings_styles(self) -> None:
+        style = ttk.Style(self.window)
+        text_font = tkfont.Font(family="Segoe UI", size=9)
+        button_font = tkfont.Font(family="Segoe UI", size=8)
+        style.configure("Settings.TButton", font=button_font, padding=(4, 2))
+        style.configure("Settings.TCheckbutton", font=text_font)
+        style.configure("Settings.TRadiobutton", font=text_font)
+        style.configure("Settings.TCombobox", font=text_font)
+
+    def _apply_settings_styles(self, widget: tk.Misc) -> None:
+        class_name = widget.winfo_class()
+        style_by_class = {
+            "TButton": "Settings.TButton",
+            "TCheckbutton": "Settings.TCheckbutton",
+            "TRadiobutton": "Settings.TRadiobutton",
+            "TCombobox": "Settings.TCombobox",
+        }
+        style_name = style_by_class.get(class_name)
+        if style_name is not None:
+            try:
+                widget.configure(style=style_name)
+            except tk.TclError:
+                pass
+        for child in widget.winfo_children():
+            self._apply_settings_styles(child)
 
     def _bind_canvas_mousewheel(self, canvas: tk.Canvas) -> None:
         def _on_mousewheel(event: tk.Event[tk.Misc]) -> str:
@@ -2757,12 +2848,17 @@ class SettingsWindow:
         except tk.TclError:
             parent_topmost = False
         try:
-            self.window.attributes("-topmost", parent_topmost)
+            self.window.attributes("-topmost", True)
         except tk.TclError:
             pass
         self.window.lift(self.root)
         self.window.focus_force()
         self.window.grab_set()
+        if not parent_topmost:
+            try:
+                self.window.after(120, lambda: self.window.attributes("-topmost", False))
+            except tk.TclError:
+                pass
 
 
 class ContactWindow:
@@ -2808,6 +2904,13 @@ class ContactWindow:
         )
 
     def open_discord(self) -> None:
+        if not DISCORD_SERVER_URL:
+            messagebox.showinfo(
+                "Contact",
+                "Discord invite is not configured.",
+                parent=self.window,
+            )
+            return
         opened = webbrowser.open(DISCORD_SERVER_URL)
         if not opened:
             messagebox.showwarning(
@@ -2863,6 +2966,9 @@ class EmailContactWindow:
         ttk.Button(buttons, text="Close", command=self.window.destroy).pack(side=tk.LEFT, padx=(8, 0))
 
     def send_email(self) -> None:
+        if not CONTACT_EMAIL:
+            messagebox.showinfo("Email", "Support email is not configured.", parent=self.window)
+            return
         sender_email = self.email_var.get().strip()
         sender_name = self.name_var.get().strip()
         message = self.message_text.get("1.0", tk.END).strip()
