@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - "**"
-    tags:
-      - "**"
+    paths-ignore:
+      - "Zwift Overlay.exe"
   workflow_dispatch:
 
 permissions:
@@ -29,12 +29,29 @@ jobs:
           py -3 -m pip install --upgrade pip
           py -3 -m pip install pyinstaller bleak openant pyusb
 
+      - name: Stamp build version
+        shell: powershell
+        run: |
+          $runNumber = "${{ github.run_number }}"
+          $version = "v0.0.$runNumber (Beta)"
+          $state = @{
+            build_version = $version
+            major = 0
+            minor = 0
+            patch = [int]$runNumber
+            fingerprint = ""
+          }
+          $json = $state | ConvertTo-Json
+          Set-Content -Path ".version_state.json" -Value $json
+          Write-Host "Stamped build version: $version"
+
       - name: Build Zwift Overlay.exe
         shell: powershell
         run: |
           if (Test-Path build) { Remove-Item -Recurse -Force build }
           if (Test-Path dist) { Remove-Item -Recurse -Force dist }
           py -3 -m PyInstaller --noconfirm --clean --onefile --windowed --name "Zwift Overlay" --add-data ".version_state.json;." app.py
+          Copy-Item "dist\Zwift Overlay.exe" "Zwift Overlay.exe" -Force
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
@@ -42,8 +59,16 @@ jobs:
           name: Zwift-Overlay-exe
           path: dist/Zwift Overlay.exe
 
-      - name: Publish EXE to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/Zwift Overlay.exe
+      - name: Commit portable EXE to repository
+        shell: powershell
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Zwift Overlay.exe"
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: update portable exe [skip ci]"
+            git push
+          } else {
+            Write-Host "No EXE changes to commit."
+          }

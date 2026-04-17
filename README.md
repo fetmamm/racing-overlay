@@ -133,9 +133,13 @@ Jag har byggt en stabil grund som fungerar utan externa bibliotek. För att läs
 
 For anvandare som inte vill installera Python:
 
-1. Oppna repo -> `Releases`.
-2. Ladda ner `Zwift Overlay.exe`.
-3. Dubbelklicka pa filen for att starta programmet.
+1. Oppna repo -> `Code` -> `Download ZIP`.
+2. Packa upp ZIP-filen.
+3. Dubbelklicka pa `Zwift Overlay.exe`.
+
+I EXE-lage sparas installningar i:
+
+`overlay_config.json` i samma mapp som `Zwift Overlay.exe`.
 
 ## Bygg EXE i GitHub
 
@@ -143,7 +147,9 @@ Projektet innehaller en GitHub Action i:
 
 - `.github/workflows/release-windows.yml`
 
-Nar du pushar en tagg som borjar med `v` (t.ex. `v0.3.7`) bygger workflowen en portable:
+Vid varje push bygger workflowen en portable:
 
 - `Zwift Overlay.exe`
+
+Workflowen committar den nya `Zwift Overlay.exe` tillbaka till repot, sa att den alltid foljer med i `Download ZIP`.
 

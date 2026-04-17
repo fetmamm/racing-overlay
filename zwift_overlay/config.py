@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "overlay_config.json"
+def _default_config_path() -> Path:
+    if getattr(sys, "frozen", False):
+        # Portable EXE mode: keep settings next to the executable so
+        # users can extract ZIP and run with persistent local config.
+        return Path(sys.executable).resolve().parent / "overlay_config.json"
+    return Path(__file__).resolve().parent.parent / "overlay_config.json"
+
+
+CONFIG_PATH = _default_config_path()
 
 
 @dataclass(slots=True)
@@ -179,4 +188,5 @@ def save_app_config(config: AppConfig) -> None:
             for role, binding in config.sensors.items()
         },
     }
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")

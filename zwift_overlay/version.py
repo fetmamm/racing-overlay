@@ -66,6 +66,9 @@ def _save_state(state: dict[str, object]) -> None:
 def _resolve_version() -> str:
     fingerprint = _compute_source_fingerprint()
     state = _load_state()
+    forced_build_version = str(state.get("build_version", "")).strip() if state else ""
+    if forced_build_version:
+        return forced_build_version
 
     if not state:
         major, minor, patch = _INITIAL_VERSION
