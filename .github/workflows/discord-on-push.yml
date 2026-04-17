@@ -1,0 +1,58 @@
+name: Discord on Push
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  notify-discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send push notification to Discord
+        uses: actions/github-script@v7
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        with:
+          script: |
+            const webhook = process.env.DISCORD_WEBHOOK_URL;
+            if (!webhook) {
+              core.setFailed("Missing secret: DISCORD_WEBHOOK_URL");
+              return;
+            }
+
+            const branch = context.ref.replace("refs/heads/", "");
+            const commits = context.payload.commits || [];
+            const shown = commits.slice(0, 5);
+            const lines = shown.map((c) => {
+              const sha = (c.id || "").slice(0, 7);
+              const message = (c.message || "").split("\n")[0];
+              const author = c.author?.name || "unknown";
+              return `- \`${sha}\` ${message} - ${author}`;
+            });
+
+            if (commits.length > shown.length) {
+              lines.push(`- ...och ${commits.length - shown.length} till`);
+            }
+
+            const compareUrl = context.payload.compare || "";
+            const contentParts = [
+              `Push till **${branch}**`,
+              `Repo: \`${context.repo.owner}/${context.repo.repo}\``,
+              `Pusher: **${context.actor}**`,
+              `Commits: **${commits.length}**`,
+            ];
+            if (lines.length) contentParts.push("", lines.join("\n"));
+            if (compareUrl) contentParts.push("", compareUrl);
+
+            const response = await fetch(webhook, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content: contentParts.join("\n") }),
+            });
+
+            if (!response.ok) {
+              const body = await response.text();
+              core.setFailed(`Discord webhook failed (${response.status}): ${body}`);
+            }
