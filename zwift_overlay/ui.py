@@ -2723,6 +2723,9 @@ class SettingsWindow:
         style = ttk.Style(self.window)
         text_font = tkfont.Font(family="Segoe UI", size=9)
         button_font = tkfont.Font(family="Segoe UI", size=8)
+        style.configure("Settings.TLabel", font=text_font)
+        style.configure("Settings.TLabelframe", font=text_font)
+        style.configure("Settings.TLabelframe.Label", font=text_font)
         style.configure("Settings.TButton", font=button_font, padding=(4, 2))
         style.configure("Settings.TCheckbutton", font=text_font)
         style.configure("Settings.TRadiobutton", font=text_font)
@@ -2731,10 +2734,18 @@ class SettingsWindow:
     def _apply_settings_styles(self, widget: tk.Misc) -> None:
         class_name = widget.winfo_class()
         style_by_class = {
+            "TLabel": "Settings.TLabel",
+            "Label": "Settings.TLabel",
+            "TLabelframe": "Settings.TLabelframe",
+            "Labelframe": "Settings.TLabelframe",
             "TButton": "Settings.TButton",
+            "Button": "Settings.TButton",
             "TCheckbutton": "Settings.TCheckbutton",
+            "Checkbutton": "Settings.TCheckbutton",
             "TRadiobutton": "Settings.TRadiobutton",
+            "Radiobutton": "Settings.TRadiobutton",
             "TCombobox": "Settings.TCombobox",
+            "Combobox": "Settings.TCombobox",
         }
         style_name = style_by_class.get(class_name)
         if style_name is not None:
