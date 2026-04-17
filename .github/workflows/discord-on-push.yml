@@ -34,8 +34,7 @@ jobs:
             const lines = shown.map((c) => {
               const sha = (c.id || "").slice(0, 7);
               const message = (c.message || "").split("\n")[0];
-              const author = c.author?.name || "unknown";
-              return `* \`${sha}\` ${message} - ${author}`;
+              return `* \`${sha}\` ${message}`;
             });
 
             if (commits.length > shown.length) {
@@ -76,7 +75,7 @@ jobs:
               contentParts.push("", ...lines);
             }
             if (descriptionText) {
-              contentParts.push("", descriptionText);
+              contentParts.push(descriptionText);
             }
             if (compareUrl) {
               contentParts.push("", compareUrl);
