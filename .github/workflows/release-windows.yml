@@ -2,8 +2,10 @@ name: Build Zwift Overlay EXE
 
 on:
   push:
+    branches:
+      - "**"
     tags:
-      - "v*"
+      - "**"
   workflow_dispatch:
 
 permissions:
