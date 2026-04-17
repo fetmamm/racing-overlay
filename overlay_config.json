@@ -1,0 +1,43 @@
+{
+  "rider_weight_kg": 69.0,
+  "rider_weight_input": "69",
+  "profile_name": "jesper",
+  "profile_email": "jesperr.svensson@gmail.com",
+  "smtp_enabled": false,
+  "smtp_host": "",
+  "smtp_port": 587,
+  "smtp_username": "",
+  "smtp_password": "",
+  "smtp_from_email": "",
+  "smtp_use_tls": true,
+  "always_on_top": true,
+  "power_display_seconds": 3,
+  "wkg_decimals": 1,
+  "delayed_start_seconds": 10,
+  "ui_scale_percent": 100,
+  "avg_power_windows_seconds": [
+    300,
+    1200
+  ],
+  "custom_avg_power_seconds": 0,
+  "show_custom_avg_power": false,
+  "show_session_avg_power": true,
+  "show_avg_hr": true,
+  "show_max_hr": true,
+  "show_avg_speed": true,
+  "show_adjusted_wkg_column": false,
+  "adjusted_wkg_percent": 90,
+  "inactive_background": "#f3f3f3",
+  "sensors": {
+    "power": {
+      "name": "Wahoo KICKR 5E76",
+      "identifier": "F5:1F:45:76:6B:4A",
+      "transport": "ble"
+    },
+    "heart_rate": {
+      "name": "HRMPro+:204691",
+      "identifier": "ED:D4:7C:AF:A2:CB",
+      "transport": "ble"
+    }
+  }
+}
