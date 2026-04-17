@@ -35,6 +35,7 @@ jobs:
           if (Test-Path build) { Remove-Item -Recurse -Force build }
           if (Test-Path dist) { Remove-Item -Recurse -Force dist }
           py -3 -m PyInstaller --noconfirm --clean --onefile --windowed --name "Zwift Overlay" --add-data ".version_state.json;." app.py
+          Copy-Item -Path ".version_state.json" -Destination "dist/version_state.json" -Force
 
       - name: Set release target
         id: release_target
@@ -57,7 +58,9 @@ jobs:
         with:
           tag_name: ${{ steps.release_target.outputs.tag }}
           name: ${{ steps.release_target.outputs.name }}
-          files: dist/Zwift Overlay.exe
+          files: |
+            dist/Zwift Overlay.exe
+            dist/version_state.json
           overwrite_files: true
           generate_release_notes: false
           make_latest: false

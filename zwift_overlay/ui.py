@@ -52,6 +52,10 @@ APP_SMTP_USE_TLS = os.getenv("ZWIFT_OVERLAY_SMTP_USE_TLS", "1").strip() not in {
 UPDATE_REPO_URL = os.getenv("ZWIFT_OVERLAY_UPDATE_REPO_URL", "https://github.com/fetmamm/racing-overlay").strip()
 UPDATE_STATE_URL = os.getenv(
     "ZWIFT_OVERLAY_UPDATE_STATE_URL",
+    "https://github.com/fetmamm/racing-overlay/releases/download/latest/version_state.json",
+).strip()
+UPDATE_STATE_FALLBACK_URL = os.getenv(
+    "ZWIFT_OVERLAY_UPDATE_STATE_FALLBACK_URL",
     "https://raw.githubusercontent.com/fetmamm/racing-overlay/main/.version_state.json",
 ).strip()
 WKG_WARNING_LIMITS: dict[str, dict[str, tuple[float | None, float | None]]] = {
@@ -1371,20 +1375,24 @@ class OverlayApp:
         latest_label = ""
         latest_tuple: tuple[int, int, int] | None = None
         check_failed = False
-        try:
-            with urlopen(UPDATE_STATE_URL, timeout=4) as response:
-                payload = response.read().decode("utf-8")
-            data = json.loads(payload)
-            major = int(data.get("major", -1))
-            minor = int(data.get("minor", -1))
-            patch = int(data.get("patch", -1))
-            if min(major, minor, patch) >= 0:
-                latest_tuple = (major, minor, patch)
-                latest_label = f"v{major}.{minor}.{patch}"
-        except Exception:
-            latest_tuple = None
-            latest_label = ""
-            check_failed = True
+        update_urls = [url for url in (UPDATE_STATE_URL, UPDATE_STATE_FALLBACK_URL) if url]
+        for update_url in update_urls:
+            try:
+                with urlopen(update_url, timeout=4) as response:
+                    payload = response.read().decode("utf-8")
+                data = json.loads(payload)
+                major = int(data.get("major", -1))
+                minor = int(data.get("minor", -1))
+                patch = int(data.get("patch", -1))
+                if min(major, minor, patch) >= 0:
+                    latest_tuple = self._normalize_version_tuple(major, minor, patch)
+                    latest_label = f"v{latest_tuple[0]}.{latest_tuple[1]}.{latest_tuple[2]}"
+                    check_failed = False
+                    break
+            except Exception:
+                latest_tuple = None
+                latest_label = ""
+                check_failed = True
         try:
             self.root.after(0, lambda: self._finish_update_check(latest_label, latest_tuple, check_failed))
         except tk.TclError:
@@ -1424,6 +1432,19 @@ class OverlayApp:
         if not match:
             return None
         return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+    @staticmethod
+    def _normalize_version_tuple(major: int, minor: int, patch: int) -> tuple[int, int, int]:
+        major = max(0, int(major))
+        minor = max(0, int(minor))
+        patch = max(0, int(patch))
+        if patch >= 10:
+            minor += patch // 10
+            patch %= 10
+        if minor >= 10:
+            major += minor // 10
+            minor %= 10
+        return major, minor, patch
 
     def _show_update_available_dialog(self, current_version: str, latest_version: str) -> None:
         dialog = tk.Toplevel(self.root)

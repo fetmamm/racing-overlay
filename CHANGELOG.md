@@ -33,6 +33,7 @@ Alla viktiga ändringar i projektet dokumenteras här.
 - Cat har nu alternativet `None` för att köra utan vald kategori/limits.
 
 ### Fixed
+- Update-kollen läser nu versionsfilen från `Latest`-releasen i första hand, med `main` som fallback.
 - Email-knappen stoppar inte längre på saknad supportadress utan öppnar relevant mailtjänst med bekräftelse först.
 - Discord-knappen i Contact öppnar nu supportservern som default.
 - `Show W/kg warnings` blir nu urkryssad och inaktiverad när Cat är `None`.
