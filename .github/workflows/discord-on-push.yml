@@ -37,19 +37,30 @@ jobs:
             }
 
             const compareUrl = context.payload.compare || "";
-            const contentParts = [
-              `Push till **${branch}**`,
-              `Repo: \`${context.repo.owner}/${context.repo.repo}\``,
-              `Pusher: **${context.actor}**`,
-              `Commits: **${commits.length}**`,
-            ];
-            if (lines.length) contentParts.push("", lines.join("\n"));
-            if (compareUrl) contentParts.push("", compareUrl);
+            const summary = lines.length ? lines.join("\n") : "No commit details available.";
+            const repoName = `${context.repo.owner}/${context.repo.repo}`;
 
             const response = await fetch(webhook, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ content: contentParts.join("\n") }),
+              body: JSON.stringify({
+                content: "A new change was pushed.",
+                embeds: [
+                  {
+                    title: "New Change In Repository",
+                    color: 3447003,
+                    fields: [
+                      { name: "Repository", value: `\`${repoName}\``, inline: true },
+                      { name: "Branch", value: `\`${branch}\``, inline: true },
+                      { name: "Pushed by", value: `**${context.actor}**`, inline: true },
+                      { name: "Commits", value: `**${commits.length}**`, inline: true },
+                    ],
+                    description: `${summary}${compareUrl ? `\n\n${compareUrl}` : ""}`,
+                    footer: { text: "GitHub Push Notification" },
+                    timestamp: new Date().toISOString(),
+                  },
+                ],
+              }),
             });
 
             if (!response.ok) {
