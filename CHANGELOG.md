@@ -13,6 +13,7 @@ Alla viktiga ändringar i projektet dokumenteras här.
 - Info-knapp bredvid Cat i Settings som visar alla kategori-limits (male/female, 5 min, 20 min) i ett separat fönster.
 
 ### Changed
+- Version bumpad för att kunna testa updateflödet via ny `Latest`-release.
 - Update-knappen visar nu både aktuell version och senaste version även när appen redan är uppdaterad, med knapp till GitHub Releases.
 - `Extra W/kg column` använder nu `95%` som defaultvärde.
 - Settings-fonter låsta till stabil storlek så texten blir mer enhetlig.
