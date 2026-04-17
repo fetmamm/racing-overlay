@@ -7,3 +7,4 @@ dist-installer/
 *.spec
 overlay_config.local.json
 Start Zwift Overlay.vbs
+local/
