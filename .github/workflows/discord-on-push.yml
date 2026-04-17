@@ -29,16 +29,25 @@ jobs:
 
             const branch = context.ref.replace("refs/heads/", "");
             const commits = context.payload.commits || [];
-            const headCommit = context.payload.head_commit || null;
             const shown = commits.slice(0, 5);
-            const lines = shown.map((c) => {
+            const commitLines = shown.flatMap((c) => {
               const sha = (c.id || "").slice(0, 7);
-              const message = (c.message || "").split("\n")[0];
-              return `* \`${sha}\` ${message}`;
+              const rawMessage = (c.message || "").trim();
+              const messageLines = rawMessage ? rawMessage.split("\n") : [];
+              const title = (messageLines[0] || "(no commit message)").trim();
+              const section = [`* \`${sha}\` ${title}`];
+              const descriptionLines = messageLines
+                .slice(1)
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+              if (descriptionLines.length) {
+                section.push(...descriptionLines.map((line) => `  - ${line}`));
+              }
+              return section;
             });
 
             if (commits.length > shown.length) {
-              lines.push(`...and ${commits.length - shown.length} more`);
+              commitLines.push(`...and ${commits.length - shown.length} more`);
             }
 
             let versionLabel = "-----";
@@ -59,16 +68,6 @@ jobs:
 
             const compareUrl = context.payload.compare || "";
             const repoName = `${context.repo.owner}/${context.repo.repo}`;
-            const headMessage = (headCommit?.message || "").trim();
-            const messageLines = headMessage ? headMessage.split("\n") : [];
-            const descriptionText = messageLines.slice(1).join("\n").trim();
-            const descriptionLines = descriptionText
-              ? descriptionText
-                  .split("\n")
-                  .map((line) => line.trim())
-                  .filter((line) => line.length > 0)
-                  .map((line) => `* ${line}`)
-              : [];
             const contentParts = [
               "A new change has been made!",
               "",
@@ -78,14 +77,11 @@ jobs:
               `Pusher: **${context.actor}**`,
               `Commits: **${commits.length}**`,
             ];
-            if (lines.length) {
-              contentParts.push("", ...lines);
-            }
-            if (descriptionLines.length) {
-              contentParts.push(...descriptionLines);
+            if (commitLines.length) {
+              contentParts.push("", ...commitLines);
             }
             if (compareUrl) {
-              contentParts.push("", compareUrl);
+              contentParts.push("", `<${compareUrl}>`);
             }
 
             const response = await fetch(webhook, {

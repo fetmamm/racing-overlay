@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _user_config_dir() -> Path:
+    appdata = os.getenv("APPDATA", "").strip()
+    if appdata:
+        return Path(appdata) / "Zwift Overlay"
+    return Path.home() / ".zwift-overlay"
+
+
 def _default_config_path() -> Path:
     project_root = Path(__file__).resolve().parent.parent
     if getattr(sys, "frozen", False):
-        # Portable EXE mode: keep settings next to the executable so
-        # users can extract ZIP and run with persistent local config.
-        return Path(sys.executable).resolve().parent / "overlay_config.json"
+        # Installed/portable EXE mode: keep settings in a stable user profile location.
+        return _user_config_dir() / "overlay_config.json"
     # Dev mode: keep local settings out of tracked repo config.
     return project_root / "overlay_config.local.json"
 
@@ -33,6 +40,7 @@ class AppConfig:
     rider_weight_input: str = ""
     profile_name: str = ""
     profile_email: str = ""
+    profile_gender: str = "male"
     smtp_enabled: bool = False
     smtp_host: str = ""
     smtp_port: int = 587
@@ -55,6 +63,7 @@ class AppConfig:
     show_adjusted_wkg_column: bool = False
     adjusted_wkg_percent: int = 90
     inactive_background: str = "#f3f3f3"
+    dismissed_update_version: str = ""
     sensors: dict[str, SensorBinding] = field(default_factory=dict)
 
     def get_sensor(self, role: str) -> SensorBinding | None:
@@ -66,7 +75,16 @@ class AppConfig:
 
 def load_app_config() -> AppConfig:
     if not CONFIG_PATH.exists():
-        if not getattr(sys, "frozen", False):
+        if getattr(sys, "frozen", False):
+            # One-time migration from old EXE-adjacent config path.
+            legacy_path = Path(sys.executable).resolve().parent / "overlay_config.json"
+            if legacy_path.exists():
+                try:
+                    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+                    CONFIG_PATH.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
+                except Exception:
+                    pass
+        else:
             # One-time migration from old dev config path.
             legacy_path = Path(__file__).resolve().parent.parent / "overlay_config.json"
             if legacy_path.exists():
@@ -136,6 +154,11 @@ def load_app_config() -> AppConfig:
         rider_weight_input=str(data.get("rider_weight_input", "")),
         profile_name=str(data.get("profile_name", "")).strip(),
         profile_email=str(data.get("profile_email", "")).strip(),
+        profile_gender=(
+            str(data.get("profile_gender", "male")).strip().lower()
+            if str(data.get("profile_gender", "male")).strip().lower() in {"male", "female"}
+            else "male"
+        ),
         smtp_enabled=bool(data.get("smtp_enabled", False)),
         smtp_host=str(data.get("smtp_host", "")).strip(),
         smtp_port=max(1, _safe_int(data.get("smtp_port", 587), 587)),
@@ -158,6 +181,7 @@ def load_app_config() -> AppConfig:
         show_adjusted_wkg_column=bool(data.get("show_adjusted_wkg_column", False)),
         adjusted_wkg_percent=adjusted_wkg_percent,
         inactive_background=str(data.get("inactive_background", "#f3f3f3")),
+        dismissed_update_version=str(data.get("dismissed_update_version", "")).strip(),
         sensors=sensors,
     )
 
@@ -168,6 +192,7 @@ def save_app_config(config: AppConfig) -> None:
         "rider_weight_input": config.rider_weight_input,
         "profile_name": config.profile_name,
         "profile_email": config.profile_email,
+        "profile_gender": config.profile_gender,
         "smtp_enabled": config.smtp_enabled,
         "smtp_host": config.smtp_host,
         "smtp_port": config.smtp_port,
@@ -190,6 +215,7 @@ def save_app_config(config: AppConfig) -> None:
         "show_adjusted_wkg_column": config.show_adjusted_wkg_column,
         "adjusted_wkg_percent": config.adjusted_wkg_percent,
         "inactive_background": config.inactive_background,
+        "dismissed_update_version": config.dismissed_update_version,
         "sensors": {
             role: {
                 "name": binding.name,

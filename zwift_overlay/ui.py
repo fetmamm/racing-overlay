@@ -4,6 +4,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import colorchooser, messagebox, ttk
 from typing import Callable
+import json
 from datetime import datetime
 import threading
 import time
@@ -13,8 +14,10 @@ import sys
 import os
 import smtplib
 import ssl
+import re
 from email.message import EmailMessage
 from urllib.parse import quote
+from urllib.request import urlopen
 
 from zwift_overlay.config import AppConfig, SensorBinding, load_app_config, save_app_config
 from zwift_overlay.models import SummaryStats, TelemetrySample
@@ -46,6 +49,11 @@ APP_SMTP_USERNAME = os.getenv("ZWIFT_OVERLAY_SMTP_USERNAME", "").strip()
 APP_SMTP_PASSWORD = os.getenv("ZWIFT_OVERLAY_SMTP_PASSWORD", "")
 APP_SMTP_FROM_EMAIL = os.getenv("ZWIFT_OVERLAY_SMTP_FROM_EMAIL", "").strip()
 APP_SMTP_USE_TLS = os.getenv("ZWIFT_OVERLAY_SMTP_USE_TLS", "1").strip() not in {"0", "false", "False"}
+UPDATE_REPO_URL = os.getenv("ZWIFT_OVERLAY_UPDATE_REPO_URL", "https://github.com/fetmamm/racing-overlay").strip()
+UPDATE_STATE_URL = os.getenv(
+    "ZWIFT_OVERLAY_UPDATE_STATE_URL",
+    "https://raw.githubusercontent.com/fetmamm/racing-overlay/main/.version_state.json",
+).strip()
 
 
 class OverlayApp:
@@ -79,6 +87,7 @@ class OverlayApp:
         self.elapsed_timer_id: str | None = None
         self.current_session_state = "stopped"
         self.refresh_in_progress = False
+        self.user_refresh_in_progress = False
         self.delayed_start_timer_id: str | None = None
         self.delayed_start_remaining_seconds = 0
         self.summary_render_timer_id: str | None = None
@@ -87,10 +96,18 @@ class OverlayApp:
         self.best_avg_power_by_window: dict[int, float] = {}
         self.sensor_live_value_hints: dict[str, str] = {}
         self.source_stop_token = 0
+        self.source_stop_in_progress = False
+        self.pending_start_after_stop = False
         self.startup_reconnect_after_id: str | None = None
         self.startup_reconnect_attempt = 0
         self.startup_reconnect_max_attempts = 2
         self.startup_reconnect_interval_ms = 2000
+        self.update_check_in_progress = False
+        self.update_check_failed = False
+        self.latest_checked_version_label = ""
+        self.latest_checked_version_tuple: tuple[int, int, int] | None = None
+        self.latest_available_version_label = ""
+        self.latest_available_version_tuple: tuple[int, int, int] | None = None
         self.base_tk_scaling = float(self.root.tk.call("tk", "scaling"))
         self.base_font_sizes = {
             "title": 14,
@@ -126,6 +143,7 @@ class OverlayApp:
         self._toggle_topmost()
         self._handle_sensor_update()
         self._schedule_startup_auto_reconnect()
+        self._schedule_update_check()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
@@ -157,6 +175,13 @@ class OverlayApp:
             command=self.open_contact_window,
         )
         self.contact_button.pack(side=tk.RIGHT, anchor=tk.E, padx=(0, 6))
+        self.update_button = ttk.Button(
+            self.title_row,
+            text="\u2b73",
+            width=3,
+            command=self._on_update_button_clicked,
+        )
+        self.update_button.pack(side=tk.RIGHT, anchor=tk.E, padx=(0, 6))
 
         self._build_status_lights(self.main_frame)
 
@@ -646,6 +671,11 @@ class OverlayApp:
             return
         if not self._ensure_weight_before_start():
             return
+        if self.source_stop_in_progress:
+            self.pending_start_after_stop = True
+            self.status_var.set("Waiting for sensors to finish stopping before restart...")
+            return
+        self.pending_start_after_stop = False
         self.is_session_running = True
         self.session_started_at = datetime.now()
         self.status_var.set(f"Running source: {self.source.name}")
@@ -666,6 +696,7 @@ class OverlayApp:
 
     def pause(self) -> None:
         self._cancel_delayed_start()
+        self.pending_start_after_stop = False
         if self.is_session_running and self.session_started_at is not None:
             elapsed = datetime.now() - self.session_started_at
             self.accumulated_elapsed_seconds += max(0, int(elapsed.total_seconds()))
@@ -679,6 +710,7 @@ class OverlayApp:
 
     def reset(self) -> None:
         self._cancel_delayed_start()
+        self.pending_start_after_stop = False
         was_running = self.current_session_state == "running"
         if self.summary_render_timer_id is not None:
             self.root.after_cancel(self.summary_render_timer_id)
@@ -706,6 +738,7 @@ class OverlayApp:
 
     def stop(self) -> None:
         self._cancel_delayed_start()
+        self.pending_start_after_stop = False
         self.is_session_running = False
         self.session_started_at = None
         if self.summary_render_timer_id is not None:
@@ -728,6 +761,7 @@ class OverlayApp:
 
     def _stop_source_async(self, action: str, on_complete: Callable[[], None] | None = None) -> None:
         self.source_stop_token += 1
+        self.source_stop_in_progress = True
         token = self.source_stop_token
         source = self.source
 
@@ -753,10 +787,14 @@ class OverlayApp:
     ) -> None:
         if token != self.source_stop_token:
             return
+        self.source_stop_in_progress = False
         if stop_error is not None and self.current_session_state != "running":
             self.status_var.set(f"{action} warning: {stop_error}")
         if on_complete is not None:
             on_complete()
+        if self.pending_start_after_stop and not self.is_session_running:
+            self.pending_start_after_stop = False
+            self.start()
 
     def _stop_source_safely(self, action: str, timeout_seconds: float = 1.2) -> bool:
         stop_error: list[Exception] = []
@@ -1107,7 +1145,7 @@ class OverlayApp:
         self._render_summary(self.aggregator.summary())
         self._apply_window_appearance()
 
-    def refresh_selected_sensors(self) -> None:
+    def refresh_selected_sensors(self, user_initiated: bool = True) -> None:
         if self.refresh_in_progress:
             return
         if not self.config.sensors:
@@ -1117,8 +1155,12 @@ class OverlayApp:
             self.status_var.set("All selected sensors are already active.")
             return
         self.refresh_in_progress = True
-        self.refresh_button.config(state=tk.DISABLED)
-        self.status_var.set("Refreshing selected sensors...")
+        self.user_refresh_in_progress = user_initiated
+        if user_initiated:
+            self.refresh_button.config(state=tk.DISABLED)
+            self.status_var.set("Refreshing selected sensors...")
+        else:
+            self.status_var.set("Auto reconnect: checking selected sensors...")
         thread = threading.Thread(target=self._refresh_selected_sensors_worker, daemon=True)
         thread.start()
 
@@ -1143,7 +1185,9 @@ class OverlayApp:
         error_message: str | None,
     ) -> None:
         self.refresh_in_progress = False
-        self.refresh_button.config(state=tk.NORMAL)
+        if self.user_refresh_in_progress:
+            self.refresh_button.config(state=tk.NORMAL)
+        self.user_refresh_in_progress = False
         for transport, devices in devices_by_transport.items():
             self._handle_scan_results(transport, devices)
         if self._all_selected_sensors_active():
@@ -1175,7 +1219,7 @@ class OverlayApp:
             return
         if not self.refresh_in_progress:
             self.startup_reconnect_attempt += 1
-            self.refresh_selected_sensors()
+            self.refresh_selected_sensors(user_initiated=False)
         self.startup_reconnect_after_id = self.root.after(
             self.startup_reconnect_interval_ms,
             self._run_startup_auto_reconnect,
@@ -1190,6 +1234,131 @@ class OverlayApp:
             self.startup_reconnect_after_id = None
         if clear_attempts:
             self.startup_reconnect_attempt = 0
+
+    def _schedule_update_check(self) -> None:
+        if self.update_check_in_progress:
+            return
+        self.update_check_in_progress = True
+        threading.Thread(target=self._check_for_update_worker, daemon=True).start()
+
+    def _check_for_update_worker(self) -> None:
+        latest_label = ""
+        latest_tuple: tuple[int, int, int] | None = None
+        check_failed = False
+        try:
+            with urlopen(UPDATE_STATE_URL, timeout=4) as response:
+                payload = response.read().decode("utf-8")
+            data = json.loads(payload)
+            major = int(data.get("major", -1))
+            minor = int(data.get("minor", -1))
+            patch = int(data.get("patch", -1))
+            if min(major, minor, patch) >= 0:
+                latest_tuple = (major, minor, patch)
+                latest_label = f"v{major}.{minor}.{patch} (Beta)"
+        except Exception:
+            latest_tuple = None
+            latest_label = ""
+            check_failed = True
+        try:
+            self.root.after(0, lambda: self._finish_update_check(latest_label, latest_tuple, check_failed))
+        except tk.TclError:
+            return
+
+    def _finish_update_check(
+        self,
+        latest_label: str,
+        latest_tuple: tuple[int, int, int] | None,
+        check_failed: bool = False,
+    ) -> None:
+        self.update_check_in_progress = False
+        self.update_check_failed = check_failed
+        self.latest_checked_version_label = latest_label
+        self.latest_checked_version_tuple = latest_tuple
+        if latest_tuple is None:
+            self.latest_available_version_label = ""
+            self.latest_available_version_tuple = None
+            return
+        current_tuple = self._parse_semver(APP_VERSION)
+        if current_tuple is None:
+            return
+        if latest_tuple <= current_tuple:
+            self.latest_available_version_label = ""
+            self.latest_available_version_tuple = None
+            return
+        self.latest_available_version_label = latest_label
+        self.latest_available_version_tuple = latest_tuple
+        dismissed_tuple = self._parse_semver(self.config.dismissed_update_version)
+        if dismissed_tuple is not None and latest_tuple <= dismissed_tuple:
+            return
+        self._show_update_available_dialog(current_version=APP_VERSION, latest_version=latest_label)
+
+    @staticmethod
+    def _parse_semver(version_label: str) -> tuple[int, int, int] | None:
+        match = re.search(r"(\d+)\.(\d+)\.(\d+)", version_label)
+        if not match:
+            return None
+        return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+    def _show_update_available_dialog(self, current_version: str, latest_version: str) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Update available")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frame,
+            text=(
+                "A new version is available.\n\n"
+                f"Current version: {current_version}\n"
+                f"Available version: {latest_version}"
+            ),
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W)
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor=tk.E, pady=(12, 0))
+
+        def _update() -> None:
+            dialog.destroy()
+            webbrowser.open(f"{UPDATE_REPO_URL}/releases")
+
+        def _cancel() -> None:
+            self.config.dismissed_update_version = latest_version
+            save_app_config(self.config)
+            dialog.destroy()
+
+        ttk.Button(buttons, text="Update", command=_update).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Cancel", command=_cancel).pack(side=tk.LEFT, padx=(8, 0))
+        dialog.protocol("WM_DELETE_WINDOW", _cancel)
+
+    def _on_update_button_clicked(self) -> None:
+        current_tuple = self._parse_semver(APP_VERSION)
+        if self.update_check_in_progress:
+            messagebox.showinfo("Update", "Checking for updates. Try again in a few seconds.", parent=self.root)
+            return
+
+        if current_tuple is not None and self.latest_available_version_tuple is not None:
+            if self.latest_available_version_tuple > current_tuple and self.latest_available_version_label:
+                self._show_update_available_dialog(APP_VERSION, self.latest_available_version_label)
+                return
+
+        if current_tuple is not None and self.latest_checked_version_tuple is not None:
+            if self.latest_checked_version_tuple > current_tuple and self.latest_checked_version_label:
+                self._show_update_available_dialog(APP_VERSION, self.latest_checked_version_label)
+                return
+            messagebox.showinfo("Update", "You are on the latest version.", parent=self.root)
+            return
+
+        if self.update_check_failed:
+            messagebox.showinfo("Update", "Could not check for updates right now.", parent=self.root)
+            return
+
+        self._schedule_update_check()
+        messagebox.showinfo("Update", "Checking for updates. Try again in a few seconds.", parent=self.root)
 
     def _all_selected_sensors_active(self) -> bool:
         if not self.config.sensors:
@@ -2370,6 +2539,10 @@ class SettingsWindow:
         self.weight_var = tk.StringVar(value=config.rider_weight_input)
         self.profile_name_var = tk.StringVar(value=config.profile_name)
         self.profile_email_var = tk.StringVar(value=config.profile_email)
+        gender_value = str(config.profile_gender).strip().lower()
+        if gender_value not in {"male", "female"}:
+            gender_value = "male"
+        self.profile_gender_var = tk.StringVar(value=gender_value)
         self.topmost_var = tk.BooleanVar(value=config.always_on_top)
         self.power_display_var = tk.StringVar(value=f"{max(1, int(config.power_display_seconds))}s")
         self.wkg_decimals_var = tk.StringVar(value=str(2 if int(config.wkg_decimals) == 2 else 1))
@@ -2397,6 +2570,11 @@ class SettingsWindow:
         self.window.resizable(True, True)
         self.window.transient(root)
         self.window.grab_set()
+        # Keep Settings typography fixed to default size, independent of UI scaler.
+        self.window.option_add("*Font", "{Segoe UI} 9")
+        self.window.option_add("*TCombobox*Listbox*Font", "{Segoe UI} 9")
+        self.settings_text_font = tkfont.Font(family="Segoe UI", size=9)
+        self.settings_button_font = tkfont.Font(family="Segoe UI", size=9)
 
         container = ttk.Frame(self.window, padding=12)
         container.pack(fill=tk.BOTH, expand=True)
@@ -2434,6 +2612,22 @@ class SettingsWindow:
         ttk.Entry(profile_frame, textvariable=self.profile_name_var, width=26).grid(row=1, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
         ttk.Label(profile_frame, text="Email").grid(row=2, column=0, sticky=tk.W, pady=(8, 0))
         ttk.Entry(profile_frame, textvariable=self.profile_email_var, width=30).grid(row=2, column=1, sticky=tk.W, padx=(8, 0), pady=(8, 0))
+        gender_row = ttk.Frame(profile_frame)
+        gender_row.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+        ttk.Radiobutton(
+            gender_row,
+            text="Male",
+            value="male",
+            variable=self.profile_gender_var,
+            style="Settings.TRadiobutton",
+        ).pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            gender_row,
+            text="Female",
+            value="female",
+            variable=self.profile_gender_var,
+            style="Settings.TRadiobutton",
+        ).pack(side=tk.LEFT, padx=(12, 0))
 
         controls_frame = ttk.Frame(top_frame)
         controls_frame.grid(row=0, column=2, columnspan=2, sticky=tk.NSEW)
@@ -2458,6 +2652,7 @@ class SettingsWindow:
             controls_frame,
             text="App always on top",
             variable=self.topmost_var,
+            style="Settings.TCheckbutton",
         ).grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
         ttk.Label(controls_frame, text="Delayed start").grid(row=3, column=0, sticky=tk.W, pady=(8, 0))
         ttk.Combobox(
@@ -2484,6 +2679,7 @@ class SettingsWindow:
             text="Reset",
             command=self._reset_ui_scale,
             width=7,
+            style="Settings.TButton",
         ).grid(row=4, column=2, sticky=tk.W, padx=(8, 0), pady=(8, 0))
 
         body = ttk.Frame(frame)
@@ -2502,6 +2698,7 @@ class SettingsWindow:
                 presets_grid,
                 text=label,
                 variable=self.avg_power_preset_vars[seconds],
+                style="Settings.TCheckbutton",
             ).grid(row=index // 3, column=index % 3, sticky=tk.W, padx=(0, 14), pady=1)
 
         custom_row = ttk.Frame(avg_power_frame)
@@ -2510,6 +2707,7 @@ class SettingsWindow:
             custom_row,
             text="Custom",
             variable=self.show_custom_avg_var,
+            style="Settings.TCheckbutton",
         ).pack(side=tk.LEFT)
         ttk.Entry(custom_row, textvariable=self.custom_avg_seconds_var, width=8).pack(side=tk.LEFT, padx=(8, 6))
         ttk.Label(custom_row, text="seconds").pack(side=tk.LEFT)
@@ -2523,16 +2721,19 @@ class SettingsWindow:
             visible_fields_frame,
             text="Power (avg) session",
             variable=self.show_session_avg_power_var,
+            style="Settings.TCheckbutton",
         ).pack(anchor=tk.W)
         ttk.Checkbutton(
             visible_fields_frame,
             text="HR / AVG / MAX",
             variable=self.show_avg_hr_var,
+            style="Settings.TCheckbutton",
         ).pack(anchor=tk.W)
         ttk.Checkbutton(
             visible_fields_frame,
             text="Speed / AVG",
             variable=self.show_avg_speed_var,
+            style="Settings.TCheckbutton",
         ).pack(anchor=tk.W)
         adjusted_row = ttk.Frame(visible_fields_frame)
         adjusted_row.pack(anchor=tk.W, fill=tk.X, pady=(4, 0))
@@ -2541,6 +2742,7 @@ class SettingsWindow:
             text="Extra W/kg column",
             variable=self.show_adjusted_wkg_column_var,
             command=self._toggle_adjusted_wkg_controls,
+            style="Settings.TCheckbutton",
         ).pack(side=tk.LEFT)
         self.adjusted_wkg_percent_combo = ttk.Combobox(
             adjusted_row,
@@ -2561,14 +2763,31 @@ class SettingsWindow:
             background_row,
             text="Choose",
             command=lambda: self.pick_color(self.inactive_background_var),
+            style="Settings.TButton",
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         buttons = ttk.Frame(self.window, padding=(12, 0, 12, 12))
         buttons.pack(fill=tk.X)
-        self.save_button = ttk.Button(buttons, text="Save", command=self.save, state=tk.DISABLED)
+        self.save_button = ttk.Button(
+            buttons,
+            text="Save",
+            command=self._save_from_button,
+            state=tk.DISABLED,
+            style="Settings.TButton",
+        )
         self.save_button.pack(side=tk.LEFT)
-        ttk.Button(buttons, text="Reset settings", command=self.confirm_reset_defaults).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Button(buttons, text="Close", command=self.window.destroy).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(
+            buttons,
+            text="Reset settings",
+            command=self.confirm_reset_defaults,
+            style="Settings.TButton",
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(
+            buttons,
+            text="Close",
+            command=self.window.destroy,
+            style="Settings.TButton",
+        ).pack(side=tk.LEFT, padx=(8, 0))
         self._configure_settings_styles()
         self._apply_settings_styles(self.window)
         self._toggle_adjusted_wkg_controls()
@@ -2624,6 +2843,11 @@ class SettingsWindow:
         self.config.rider_weight_kg = weight_kg
         self.config.profile_name = self.profile_name_var.get().strip()
         self.config.profile_email = self.profile_email_var.get().strip()
+        self.config.profile_gender = (
+            self.profile_gender_var.get()
+            if self.profile_gender_var.get() in {"male", "female"}
+            else "male"
+        )
         self.config.always_on_top = self.topmost_var.get()
         self.config.power_display_seconds = power_display_seconds
         self.config.wkg_decimals = wkg_decimals
@@ -2645,6 +2869,14 @@ class SettingsWindow:
         if close_window:
             self.window.destroy()
         return True
+
+    def _save_from_button(self) -> None:
+        close_window = not self._ui_scale_changed_since_last_save()
+        self.save(close_window=close_window)
+
+    def _ui_scale_changed_since_last_save(self) -> bool:
+        saved_scale = int(self._saved_snapshot[7])
+        return int(self.ui_scale_var.get()) != saved_scale
 
     def pick_color(self, variable: tk.StringVar) -> None:
         chosen = colorchooser.askcolor(color=variable.get(), parent=self.window, title="Choose background color")
@@ -2669,6 +2901,7 @@ class SettingsWindow:
             self.weight_var,
             self.profile_name_var,
             self.profile_email_var,
+            self.profile_gender_var,
             self.topmost_var,
             self.power_display_var,
             self.wkg_decimals_var,
@@ -2699,6 +2932,7 @@ class SettingsWindow:
             self.weight_var.get(),
             self.profile_name_var.get(),
             self.profile_email_var.get(),
+            self.profile_gender_var.get(),
             bool(self.topmost_var.get()),
             self.power_display_var.get(),
             self.wkg_decimals_var.get(),
@@ -2721,15 +2955,14 @@ class SettingsWindow:
 
     def _configure_settings_styles(self) -> None:
         style = ttk.Style(self.window)
-        text_font = tkfont.Font(family="Segoe UI", size=9)
-        button_font = tkfont.Font(family="Segoe UI", size=8)
-        style.configure("Settings.TLabel", font=text_font)
-        style.configure("Settings.TLabelframe", font=text_font)
-        style.configure("Settings.TLabelframe.Label", font=text_font)
-        style.configure("Settings.TButton", font=button_font, padding=(4, 2))
-        style.configure("Settings.TCheckbutton", font=text_font)
-        style.configure("Settings.TRadiobutton", font=text_font)
-        style.configure("Settings.TCombobox", font=text_font)
+        style.configure("Settings.TLabel", font=self.settings_text_font)
+        style.configure("Settings.TLabelframe", font=self.settings_text_font)
+        style.configure("Settings.TLabelframe.Label", font=self.settings_text_font)
+        style.configure("Settings.TButton", font=self.settings_button_font, padding=(4, 2))
+        style.configure("Settings.TCheckbutton", font=self.settings_text_font)
+        style.configure("Settings.TRadiobutton", font=self.settings_text_font)
+        style.configure("Settings.TCombobox", font=self.settings_text_font)
+        style.configure("Settings.TEntry", font=self.settings_text_font)
 
     def _apply_settings_styles(self, widget: tk.Misc) -> None:
         class_name = widget.winfo_class()
@@ -2746,6 +2979,8 @@ class SettingsWindow:
             "Radiobutton": "Settings.TRadiobutton",
             "TCombobox": "Settings.TCombobox",
             "Combobox": "Settings.TCombobox",
+            "TEntry": "Settings.TEntry",
+            "Entry": "Settings.TEntry",
         }
         style_name = style_by_class.get(class_name)
         if style_name is not None:
@@ -2804,6 +3039,7 @@ class SettingsWindow:
         self.weight_var.set("")
         self.profile_name_var.set("")
         self.profile_email_var.set("")
+        self.profile_gender_var.set("male")
         self.topmost_var.set(True)
         self.power_display_var.set("3s")
         self.wkg_decimals_var.set("1")

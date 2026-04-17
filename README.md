@@ -1,155 +1,89 @@
-# Overlay for Zwift
+# Zwift Overlay
 
-Ett första skrivbordsprogram i Python som samlar in träningsdata och visar en liten live-sammanfattning i ett separat fönster.
+Desktop app in Python that shows live training data in a compact overlay window for Zwift sessions.
 
-## Vad programmet gor just nu
+## Current status
 
-- visar en minimalistisk overlay med fokus pa textvarden
-- later anvandaren valja om fonstret ska vara alltid overst
-- later anvandaren ange vikt i kg for att rakna ut watt per kilo
-- räknar ut:
-  - aktuell effekt
-  - aktuell watt per kilo
-  - 5 minuters rullande snitteffekt
-  - 20 minuters rullande snitteffekt
-  - genomsnittlig puls
-  - maxpuls
-  - genomsnittlig kadens
-  - genomsnittlig hastighet
-- innehaller en sensor-dialog dar du kan:
-  - valja `effektmatare`, `pulsmatare` och `kadenssensor`
-  - soka efter tillgangliga enheter via `Bluetooth LE` eller `ANT+`
-  - tilldela vald enhet till ratt sensortyp
-- ar forberett for en hybridlosning:
-  - effekt, puls och kadens via sensorer
-  - hastighet via OCR/skarmavlasning fran Zwift
-- innehaller fortfarande en fungerande demokalla nar inga sensorer ar valda
+The app currently supports:
 
-## Sessionkontroller
+- Live power and heart rate from sensors (BLE and ANT+)
+- W/kg calculation based on rider weight
+- Rolling best power rows (preset windows + optional custom window)
+- Session controls: Start, Delayed start, Pause, Reset, Stop
+- Optional columns/rows in UI (session avg power, HR avg/max, speed avg, extra W/kg column)
+- Sensor selection dialog with scan and assignment
+- Auto reconnect checks for selected sensors after startup
+- Contact window (Discord + Email flow)
 
-Programmet har tre knappar:
+## Run locally
 
-- `Starta` för att börja en session
-- `Pausa` för att stoppa inflödet men behålla statistiken
-- `Nollställ` för att rensa sessionen helt
+From project root:
 
-Det finns ocksa en knapp `Sensorer` som oppnar konfigurationen for sensorval.
+```powershell
+py app.py
+```
 
-## Sensorer och bibliotek
+or launch without terminal:
 
-Bluetooth-sokning anvander `bleak` om det ar installerat och forsoker nu klassa sensorer som puls, effekt och kadens utifran BLE-tjanster och namn.
+```text
+Start Zwift Overlay.vbs
+```
+
+Or download .exe file from Releases
+
+## Sensor support
+
+### Bluetooth (BLE)
+
+Install:
 
 ```powershell
 py -m pip install bleak
 ```
 
-ANT+-sokning letar nu efter kompatibel ANT+-dongel i Windows. Själva live-lasningen av sensorer over ANT+ ar fortfarande nasta steg. Nar du vill ta det steget ar det naturligt att installera:
+### ANT+
+
+Install:
 
 ```powershell
 py -m pip install openant
 py -m pip install pyusb
 ```
 
-## Hastighet fran Zwift
+## Settings and saved config
 
-Hastighet ska inte komma fran en extern sensor i denna losning. Tanken i projektet ar i stallet:
+Config is saved automatically.
 
-- effekt, puls och kadens valjs som sensorer i sensorfonstren
-- hastighet lases av fran Zwift-fonstret via OCR
+- Dev run (`py app.py`): `overlay_config.local.json` in project root
+- EXE run (frozen build): `%APPDATA%\Zwift Overlay\overlay_config.json`
 
-OCR-delen ar fortfarande en separat nasta etapp.
+When running EXE, old config next to the EXE is migrated once if found.
 
-## Starta programmet
+## Build and releases (GitHub Actions)
 
-Kör:
-
-```powershell
-py app.py
-```
-
-Programmet startar i demoläge så att du direkt kan se att summeringarna fungerar.
-
-Du kan ocksa starta programmet utan terminal genom att dubbelklicka pa:
-
-```text
-Start Zwift Overlay.vbs
-```
-
-## Sparade installningar
-
-Programmet sparar installningar till `overlay_config.json` i projektmappen.
-
-Det som sparas mellan sessioner ar bland annat:
-
-- vikt
-- om fonstret ska vara alltid overst
-- valda sensorer
-
-Andringar sparas nar du uppdaterar dem och igen nar programmet stangs.
-
-## Nästa steg för riktig Zwift-data
-
-### 1. Skärmläsning/OCR
-
-Lägg till ett OCR-flöde som:
-
-- tar skärmdumpar av ett valt område i Zwift
-- läser av siffror för puls, watt, kadens och hastighet
-- skickar in datapunkter till samma beräkningsmotor som redan finns
-
-Vanliga Python-paket för detta:
-
-- `mss` för skärmdump
-- `opencv-python` för bildbehandling
-- `pytesseract` eller Windows OCR för textigenkänning
-
-### 2. ANT+ / Bluetooth
-
-Lägg till en källa som läser direkt från sensorer:
-
-- ANT+: ofta via `openant`
-- Bluetooth Low Energy: ofta via `bleak`
-
-Det bästa långsiktigt är att köra sensorvägen när det går, eftersom den är stabilare än OCR.
-
-## Projektstruktur
-
-- `app.py` startar programmet
-- `zwift_overlay/models.py` innehåller datamodeller
-- `zwift_overlay/stats.py` räknar ut sammanfattningar
-- `zwift_overlay/ui.py` visar fönstret
-- `zwift_overlay/sources/` innehåller datakällor
-
-## Viktig notering
-
-Jag har byggt en stabil grund som fungerar utan externa bibliotek. För att läsa riktig data från Zwift-skärmen eller hårdvara behöver vi i nästa steg välja:
-
-- OCR-baserad lösning
-- Bluetooth
-- ANT+
-- eller en kombination där sensorer är primär källa och OCR är reserv
-
-## EXE for anvandare
-
-For anvandare som inte vill installera Python:
-
-1. Oppna repo -> `Code` -> `Download ZIP`.
-2. Packa upp ZIP-filen.
-3. Dubbelklicka pa `Zwift Overlay.exe`.
-
-I EXE-lage sparas installningar i:
-
-`overlay_config.json` i samma mapp som `Zwift Overlay.exe`.
-
-## Bygg EXE i GitHub
-
-Projektet innehaller en GitHub Action i:
+Workflow file:
 
 - `.github/workflows/release-windows.yml`
 
-Vid varje push bygger workflowen en portable:
+Behavior:
 
-- `Zwift Overlay.exe`
+- Push to `main` -> build EXE and update release `Latest` (tag `latest`)
+- Push to `stable` -> build EXE and update release `Stable` (tag `stable`)
+- Same release is reused and updated (no new release per push)
 
-Workflowen committar den nya `Zwift Overlay.exe` tillbaka till repot, sa att den alltid foljer med i `Download ZIP`.
+The EXE is uploaded to GitHub Releases and should not live in source files.
 
+## Changelog
+
+Se [CHANGELOG.md](./CHANGELOG.md) för kortfattad historik över förbättringar, bugfixar och nya funktioner.
+
+## Project structure
+
+- `app.py` - app entrypoint
+- `zwift_overlay/ui.py` - main UI and windows
+- `zwift_overlay/config.py` - config model/load/save
+- `zwift_overlay/sensors.py` - scan/discovery logic
+- `zwift_overlay/sources/sensor_stub.py` - live telemetry source
+- `zwift_overlay/stats.py` - aggregation and rolling averages
+- `.github/workflows/release-windows.yml` - release build pipeline
+- `.github/workflows/discord-on-push.yml` - Discord push notifications
