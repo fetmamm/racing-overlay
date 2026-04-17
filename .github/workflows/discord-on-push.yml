@@ -59,7 +59,7 @@ jobs:
                 const minor = Number.isFinite(Number(state.minor)) ? Number(state.minor) : null;
                 const patch = Number.isFinite(Number(state.patch)) ? Number(state.patch) : null;
                 if (major !== null && minor !== null && patch !== null) {
-                  versionLabel = `v${major}.${minor}.${patch} (Beta)`;
+                  versionLabel = `v${major}.${minor}.${patch}`;
                 }
               }
             } catch (error) {

@@ -26,7 +26,7 @@
   "show_max_hr": true,
   "show_avg_speed": true,
   "show_adjusted_wkg_column": false,
-  "adjusted_wkg_percent": 90,
+  "adjusted_wkg_percent": 95,
   "inactive_background": "#f3f3f3",
   "sensors": {}
 }

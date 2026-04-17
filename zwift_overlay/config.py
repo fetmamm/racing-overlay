@@ -41,6 +41,7 @@ class AppConfig:
     profile_name: str = ""
     profile_email: str = ""
     profile_gender: str = "male"
+    profile_category: str = "NONE"
     smtp_enabled: bool = False
     smtp_host: str = ""
     smtp_port: int = 587
@@ -59,9 +60,10 @@ class AppConfig:
     show_session_avg_power: bool = True
     show_avg_hr: bool = True
     show_max_hr: bool = True
-    show_avg_speed: bool = True
+    show_avg_speed: bool = False
     show_adjusted_wkg_column: bool = False
-    adjusted_wkg_percent: int = 90
+    adjusted_wkg_percent: int = 95
+    show_wkg_warnings: bool = False
     inactive_background: str = "#f3f3f3"
     dismissed_update_version: str = ""
     sensors: dict[str, SensorBinding] = field(default_factory=dict)
@@ -115,11 +117,11 @@ def load_app_config() -> AppConfig:
             return default
 
     try:
-        adjusted_wkg_percent = int(data.get("adjusted_wkg_percent", 90))
+        adjusted_wkg_percent = int(data.get("adjusted_wkg_percent", 95))
     except (TypeError, ValueError):
-        adjusted_wkg_percent = 90
+        adjusted_wkg_percent = 95
     if adjusted_wkg_percent not in (90, 95):
-        adjusted_wkg_percent = 90
+        adjusted_wkg_percent = 95
     allowed_sensor_roles = {"power", "heart_rate"}
     sensors_payload = data.get("sensors", {})
     sensors: dict[str, SensorBinding] = {}
@@ -159,6 +161,11 @@ def load_app_config() -> AppConfig:
             if str(data.get("profile_gender", "male")).strip().lower() in {"male", "female"}
             else "male"
         ),
+        profile_category=(
+            str(data.get("profile_category", "NONE")).strip().upper()
+            if str(data.get("profile_category", "NONE")).strip().upper() in {"NONE", "A", "B", "C", "D"}
+            else "NONE"
+        ),
         smtp_enabled=bool(data.get("smtp_enabled", False)),
         smtp_host=str(data.get("smtp_host", "")).strip(),
         smtp_port=max(1, _safe_int(data.get("smtp_port", 587), 587)),
@@ -177,9 +184,10 @@ def load_app_config() -> AppConfig:
         show_session_avg_power=bool(data.get("show_session_avg_power", True)),
         show_avg_hr=bool(data.get("show_avg_hr", True)),
         show_max_hr=bool(data.get("show_max_hr", True)),
-        show_avg_speed=bool(data.get("show_avg_speed", True)),
+        show_avg_speed=bool(data.get("show_avg_speed", False)),
         show_adjusted_wkg_column=bool(data.get("show_adjusted_wkg_column", False)),
         adjusted_wkg_percent=adjusted_wkg_percent,
+        show_wkg_warnings=bool(data.get("show_wkg_warnings", False)),
         inactive_background=str(data.get("inactive_background", "#f3f3f3")),
         dismissed_update_version=str(data.get("dismissed_update_version", "")).strip(),
         sensors=sensors,
@@ -193,6 +201,7 @@ def save_app_config(config: AppConfig) -> None:
         "profile_name": config.profile_name,
         "profile_email": config.profile_email,
         "profile_gender": config.profile_gender,
+        "profile_category": config.profile_category,
         "smtp_enabled": config.smtp_enabled,
         "smtp_host": config.smtp_host,
         "smtp_port": config.smtp_port,
@@ -214,6 +223,7 @@ def save_app_config(config: AppConfig) -> None:
         "show_avg_speed": config.show_avg_speed,
         "show_adjusted_wkg_column": config.show_adjusted_wkg_column,
         "adjusted_wkg_percent": config.adjusted_wkg_percent,
+        "show_wkg_warnings": config.show_wkg_warnings,
         "inactive_background": config.inactive_background,
         "dismissed_update_version": config.dismissed_update_version,
         "sensors": {

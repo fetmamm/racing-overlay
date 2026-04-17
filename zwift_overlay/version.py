@@ -40,7 +40,7 @@ def _resolve_version() -> str:
     state = _load_state()
     forced_build_version = str(state.get("build_version", "")).strip() if state else ""
     if forced_build_version:
-        return forced_build_version
+        return forced_build_version.replace(" (Beta)", "")
 
     major = int(state.get("major", _INITIAL_VERSION[0]))
     minor = int(state.get("minor", _INITIAL_VERSION[1]))
@@ -56,7 +56,7 @@ def _resolve_version() -> str:
         }
     )
 
-    return f"v{major}.{minor}.{patch} (Beta)"
+    return f"v{major}.{minor}.{patch}"
 
 
 APP_VERSION = _resolve_version()

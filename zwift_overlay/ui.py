@@ -35,7 +35,7 @@ from zwift_overlay.stats import TelemetryAggregator
 from zwift_overlay.version import APP_VERSION
 
 AVG_POWER_PRESET_SECONDS = [10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1800, 2700, 3600]
-DISCORD_SERVER_URL = os.getenv("ZWIFT_OVERLAY_DISCORD_URL", "").strip()
+DISCORD_SERVER_URL = os.getenv("ZWIFT_OVERLAY_DISCORD_URL", "https://discord.gg/wxdn9GRUmV").strip()
 CONTACT_EMAIL = os.getenv("ZWIFT_OVERLAY_CONTACT_EMAIL", "").strip()
 HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 CYCLING_POWER_MEASUREMENT_UUID = "00002a63-0000-1000-8000-00805f9b34fb"
@@ -54,6 +54,20 @@ UPDATE_STATE_URL = os.getenv(
     "ZWIFT_OVERLAY_UPDATE_STATE_URL",
     "https://raw.githubusercontent.com/fetmamm/racing-overlay/main/.version_state.json",
 ).strip()
+WKG_WARNING_LIMITS: dict[str, dict[str, tuple[float | None, float | None]]] = {
+    "male": {
+        "A": (None, None),
+        "B": (5.1, 4.2),
+        "C": (4.1, 3.36),
+        "D": (3.2, 2.625),
+    },
+    "female": {
+        "A": (None, None),
+        "B": (4.8, 3.88),
+        "C": (4.1, 3.36),
+        "D": (3.2, 2.625),
+    },
+}
 
 
 class OverlayApp:
@@ -190,7 +204,17 @@ class OverlayApp:
         self.metric_rows: dict[str, ttk.Frame] = {}
         self.avg_power_row_vars: dict[int, tuple[tk.StringVar, tk.StringVar, tk.StringVar]] = {}
         self.avg_power_row_frames: dict[int, ttk.Frame] = {}
+        self.avg_power_wkg_labels: dict[int, ttk.Label] = {}
         self.avg_power_adjusted_labels: dict[int, ttk.Label] = {}
+        self.current_wkg_label: ttk.Label | None = None
+        self.avg_power_wkg_label: ttk.Label | None = None
+        self._warning_wkg_values: dict[str, float | None] = {
+            "current": None,
+            "session_avg": None,
+            "current_adjusted": None,
+            "session_avg_adjusted": None,
+        }
+        self._warning_wkg_values_by_window: dict[int, dict[str, float | None]] = {}
 
         for label, key in [
             ("Time", "elapsed"),
@@ -239,13 +263,14 @@ class OverlayApp:
 
         wkg_value = tk.StringVar(value="-")
         self.labels["current_wkg"] = wkg_value
-        ttk.Label(
+        self.current_wkg_label = ttk.Label(
             power_group,
             textvariable=wkg_value,
             font=self.font_value,
             width=8,
             style="OverlayValue.TLabel",
-        ).pack(side=tk.LEFT, padx=(6, 0))
+        )
+        self.current_wkg_label.pack(side=tk.LEFT, padx=(6, 0))
         current_adjusted_wkg_value = tk.StringVar(value="-")
         self.labels["current_adjusted_wkg"] = current_adjusted_wkg_value
         self.current_adjusted_wkg_label = ttk.Label(
@@ -281,13 +306,14 @@ class OverlayApp:
 
         avg_power_wkg_value = tk.StringVar(value="-")
         self.labels["avg_power_wkg"] = avg_power_wkg_value
-        ttk.Label(
+        self.avg_power_wkg_label = ttk.Label(
             session_avg_group,
             textvariable=avg_power_wkg_value,
             font=self.font_value,
             width=8,
             style="OverlayValue.TLabel",
-        ).pack(side=tk.LEFT, padx=(6, 0))
+        )
+        self.avg_power_wkg_label.pack(side=tk.LEFT, padx=(6, 0))
         avg_power_adjusted_wkg_value = tk.StringVar(value="-")
         self.labels["avg_power_adjusted_wkg"] = avg_power_adjusted_wkg_value
         self.avg_power_adjusted_wkg_label = ttk.Label(
@@ -508,6 +534,8 @@ class OverlayApp:
         self.style.configure("OverlayMetric.TLabel", background=background, foreground="#111111", font=self.font_default)
         self.style.configure("OverlayHeader.TLabel", background=background, foreground="#111111", font=self.font_header)
         self.style.configure("OverlayValue.TLabel", background=background, foreground="#111111", font=self.font_value)
+        self.style.configure("OverlayValueWarning.TLabel", background=background, foreground="#c62828", font=self.font_value)
+        self.style.configure("OverlayValueCaution.TLabel", background=background, foreground="#b8860b", font=self.font_value)
         self.style.configure("OverlayStatus.TLabel", background=background, foreground="#222222", font=self.font_status)
         self.style.configure("TButton", font=self.font_button, padding=(button_pad_x, button_pad_y))
         self.style.configure("TCheckbutton", font=self.font_default)
@@ -554,6 +582,7 @@ class OverlayApp:
             row.destroy()
         self.avg_power_row_vars = {}
         self.avg_power_row_frames = {}
+        self.avg_power_wkg_labels = {}
         self.avg_power_adjusted_labels = {}
 
         for seconds in self._selected_avg_power_windows():
@@ -581,13 +610,14 @@ class OverlayApp:
                 width=8,
                 style="OverlayValue.TLabel",
             ).pack(side=tk.LEFT)
-            ttk.Label(
+            wkg_label = ttk.Label(
                 value_group,
                 textvariable=wkg_value,
                 font=self.font_value,
                 width=8,
                 style="OverlayValue.TLabel",
-            ).pack(side=tk.LEFT, padx=(6, 0))
+            )
+            wkg_label.pack(side=tk.LEFT, padx=(6, 0))
             adjusted_label = ttk.Label(
                 value_group,
                 textvariable=adjusted_wkg_value,
@@ -598,9 +628,11 @@ class OverlayApp:
             adjusted_label.pack(side=tk.LEFT, padx=(6, 0))
             self.avg_power_row_frames[seconds] = row
             self.avg_power_row_vars[seconds] = (power_value, wkg_value, adjusted_wkg_value)
+            self.avg_power_wkg_labels[seconds] = wkg_label
             self.avg_power_adjusted_labels[seconds] = adjusted_label
 
         self._sync_adjusted_wkg_ui()
+        self._apply_wkg_warning_styles()
 
     @staticmethod
     def _format_duration_label(seconds: int) -> str:
@@ -962,24 +994,34 @@ class OverlayApp:
         self.labels["current_power"].set(self._format_power(displayed_power))
         self.labels["current_wkg"].set(self._format_wkg(displayed_power))
         self.labels["current_adjusted_wkg"].set(self._format_adjusted_wkg(displayed_power))
+        self._warning_wkg_values["current"] = self._wkg_value_from_power(displayed_power)
+        self._warning_wkg_values["current_adjusted"] = self._adjusted_wkg_value_from_power(displayed_power)
         self.labels["elapsed"].set(self._format_elapsed(self._current_elapsed_seconds()))
 
+        self._warning_wkg_values_by_window = {}
         for seconds, value_vars in self.avg_power_row_vars.items():
             power_value, wkg_value, adjusted_wkg_value = value_vars
             best_power = self.best_avg_power_by_window.get(seconds)
             power_value.set(self._format_power(best_power))
             wkg_value.set(self._format_wkg(best_power))
             adjusted_wkg_value.set(self._format_adjusted_wkg(best_power))
+            self._warning_wkg_values_by_window[seconds] = {
+                "wkg": self._wkg_value_from_power(best_power),
+                "adjusted_wkg": self._adjusted_wkg_value_from_power(best_power),
+            }
 
         self.labels["avg_power"].set(self._format_power(summary.average_power_watts))
         self.labels["avg_power_wkg"].set(self._format_wkg(summary.average_power_watts))
         self.labels["avg_power_adjusted_wkg"].set(self._format_adjusted_wkg(summary.average_power_watts))
+        self._warning_wkg_values["session_avg"] = self._wkg_value_from_power(summary.average_power_watts)
+        self._warning_wkg_values["session_avg_adjusted"] = self._adjusted_wkg_value_from_power(summary.average_power_watts)
         self.labels["current_hr"].set(self._format_int(summary.current_heart_rate, ""))
         self.labels["avg_hr"].set(self._format_int(self._rounded(summary.average_heart_rate), ""))
         self.labels["max_hr"].set(self._format_int(summary.max_heart_rate, ""))
         self.labels["current_speed"].set(self._format_float(summary.current_speed_kph, ""))
         self.labels["avg_speed"].set(self._format_float(summary.average_speed_kph, ""))
         self._update_sensor_live_value_hints(summary)
+        self._apply_wkg_warning_styles()
 
     def _update_sensor_live_value_hints(self, summary: SummaryStats) -> None:
         if not self.is_session_running:
@@ -1041,6 +1083,90 @@ class OverlayApp:
         percent = 95 if int(self.config.adjusted_wkg_percent) == 95 else 90
         adjusted_power = float(power_watts) * (percent / 100.0)
         return self._format_wkg(adjusted_power)
+
+    def _wkg_value_from_power(self, power_watts: int | float | None) -> float | None:
+        if power_watts is None:
+            return None
+        try:
+            weight_kg = float(self.weight_var.get().replace(",", "."))
+        except ValueError:
+            return None
+        if weight_kg <= 0:
+            return None
+        return float(power_watts) / weight_kg
+
+    def _adjusted_wkg_value_from_power(self, power_watts: int | float | None) -> float | None:
+        if power_watts is None:
+            return None
+        percent = 95 if int(self.config.adjusted_wkg_percent) == 95 else 90
+        adjusted_power = float(power_watts) * (percent / 100.0)
+        return self._wkg_value_from_power(adjusted_power)
+
+    def _selected_wkg_limits(self) -> tuple[float | None, float | None]:
+        gender = str(self.config.profile_gender).strip().lower()
+        if gender not in {"male", "female"}:
+            gender = "male"
+        category = str(self.config.profile_category).strip().upper()
+        if category == "NONE":
+            return (None, None)
+        if category not in {"A", "B", "C", "D"}:
+            category = "NONE"
+        return WKG_WARNING_LIMITS.get(gender, WKG_WARNING_LIMITS["male"]).get(category, (None, None))
+
+    @staticmethod
+    def _warning_style_for_value(value: float | None, limit: float | None) -> str:
+        if value is None or limit is None:
+            return "OverlayValue.TLabel"
+        if value > limit:
+            return "OverlayValueWarning.TLabel"
+        if value >= (limit - 0.3):
+            return "OverlayValueCaution.TLabel"
+        return "OverlayValue.TLabel"
+
+    @staticmethod
+    def _set_warning_style(label: ttk.Label | None, style_name: str) -> None:
+        if label is None:
+            return
+        try:
+            label.configure(style=style_name)
+        except tk.TclError:
+            return
+
+    def _apply_wkg_warning_styles(self) -> None:
+        self._set_warning_style(self.current_wkg_label, "OverlayValue.TLabel")
+        self._set_warning_style(self.current_adjusted_wkg_label if hasattr(self, "current_adjusted_wkg_label") else None, "OverlayValue.TLabel")
+        self._set_warning_style(self.avg_power_wkg_label, "OverlayValue.TLabel")
+        self._set_warning_style(self.avg_power_adjusted_wkg_label if hasattr(self, "avg_power_adjusted_wkg_label") else None, "OverlayValue.TLabel")
+        for label in self.avg_power_wkg_labels.values():
+            self._set_warning_style(label, "OverlayValue.TLabel")
+        for label in self.avg_power_adjusted_labels.values():
+            self._set_warning_style(label, "OverlayValue.TLabel")
+
+        if not self.config.show_wkg_warnings:
+            return
+
+        limit_5m, limit_20m = self._selected_wkg_limits()
+        use_adjusted_only = bool(self.config.show_adjusted_wkg_column)
+
+        if use_adjusted_only:
+            self._set_warning_style(
+                self.avg_power_adjusted_wkg_label if hasattr(self, "avg_power_adjusted_wkg_label") else None,
+                self._warning_style_for_value(self._warning_wkg_values.get("session_avg_adjusted"), limit_20m),
+            )
+            for seconds, label in self.avg_power_adjusted_labels.items():
+                limit = limit_5m if seconds == 300 else (limit_20m if seconds == 1200 else None)
+                value = (self._warning_wkg_values_by_window.get(seconds) or {}).get("adjusted_wkg")
+                self._set_warning_style(label, self._warning_style_for_value(value, limit))
+            return
+
+        self._set_warning_style(
+            self.avg_power_wkg_label,
+            self._warning_style_for_value(self._warning_wkg_values.get("session_avg"), limit_20m),
+        )
+        for seconds, label in self.avg_power_wkg_labels.items():
+            limit = limit_5m if seconds == 300 else (limit_20m if seconds == 1200 else None)
+            value = (self._warning_wkg_values_by_window.get(seconds) or {}).get("wkg")
+            self._set_warning_style(label, self._warning_style_for_value(value, limit))
 
     @staticmethod
     def _format_elapsed(elapsed_seconds: int) -> str:
@@ -1254,7 +1380,7 @@ class OverlayApp:
             patch = int(data.get("patch", -1))
             if min(major, minor, patch) >= 0:
                 latest_tuple = (major, minor, patch)
-                latest_label = f"v{major}.{minor}.{patch} (Beta)"
+                latest_label = f"v{major}.{minor}.{patch}"
         except Exception:
             latest_tuple = None
             latest_label = ""
@@ -1335,6 +1461,37 @@ class OverlayApp:
         ttk.Button(buttons, text="Cancel", command=_cancel).pack(side=tk.LEFT, padx=(8, 0))
         dialog.protocol("WM_DELETE_WINDOW", _cancel)
 
+    def _show_latest_version_dialog(self, current_version: str, latest_version: str) -> None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Update")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frame,
+            text=(
+                "You are on the latest version.\n\n"
+                f"Current version: {current_version}\n"
+                f"Latest version: {latest_version}"
+            ),
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W)
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor=tk.E, pady=(12, 0))
+
+        def _open_releases() -> None:
+            dialog.destroy()
+            webbrowser.open(f"{UPDATE_REPO_URL}/releases")
+
+        ttk.Button(buttons, text="GitHub Releases", command=_open_releases).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Close", command=dialog.destroy).pack(side=tk.LEFT, padx=(8, 0))
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+
     def _on_update_button_clicked(self) -> None:
         current_tuple = self._parse_semver(APP_VERSION)
         if self.update_check_in_progress:
@@ -1350,7 +1507,7 @@ class OverlayApp:
             if self.latest_checked_version_tuple > current_tuple and self.latest_checked_version_label:
                 self._show_update_available_dialog(APP_VERSION, self.latest_checked_version_label)
                 return
-            messagebox.showinfo("Update", "You are on the latest version.", parent=self.root)
+            self._show_latest_version_dialog(APP_VERSION, self.latest_checked_version_label)
             return
 
         if self.update_check_failed:
@@ -1454,6 +1611,8 @@ class OverlayApp:
         self.style.configure("OverlayMetric.TLabel", background=background, foreground="#111111")
         self.style.configure("OverlayHeader.TLabel", background=background, foreground="#111111")
         self.style.configure("OverlayValue.TLabel", background=background, foreground="#111111")
+        self.style.configure("OverlayValueWarning.TLabel", background=background, foreground="#c62828")
+        self.style.configure("OverlayValueCaution.TLabel", background=background, foreground="#b8860b")
         self.style.configure("OverlayStatus.TLabel", background=background, foreground="#222222")
         self.light_canvas.configure(bg=background)
         for role in ("power", "heart_rate"):
@@ -2543,6 +2702,10 @@ class SettingsWindow:
         if gender_value not in {"male", "female"}:
             gender_value = "male"
         self.profile_gender_var = tk.StringVar(value=gender_value)
+        category_value = str(config.profile_category).strip().upper()
+        if category_value not in {"NONE", "A", "B", "C", "D"}:
+            category_value = "NONE"
+        self.profile_category_var = tk.StringVar(value="None" if category_value == "NONE" else category_value)
         self.topmost_var = tk.BooleanVar(value=config.always_on_top)
         self.power_display_var = tk.StringVar(value=f"{max(1, int(config.power_display_seconds))}s")
         self.wkg_decimals_var = tk.StringVar(value=str(2 if int(config.wkg_decimals) == 2 else 1))
@@ -2554,6 +2717,7 @@ class SettingsWindow:
         self.show_avg_hr_var = tk.BooleanVar(value=config.show_avg_hr)
         self.show_avg_speed_var = tk.BooleanVar(value=config.show_avg_speed)
         self.show_adjusted_wkg_column_var = tk.BooleanVar(value=config.show_adjusted_wkg_column)
+        self.show_wkg_warnings_var = tk.BooleanVar(value=config.show_wkg_warnings)
         adjusted_percent = 95 if int(config.adjusted_wkg_percent) == 95 else 90
         self.adjusted_wkg_percent_var = tk.StringVar(value=f"{adjusted_percent}%")
         configured_windows = {int(value) for value in config.avg_power_windows_seconds}
@@ -2565,8 +2729,8 @@ class SettingsWindow:
 
         self.window = tk.Toplevel(root)
         self.window.title("Settings")
-        self.window.geometry("720x560")
-        self.window.minsize(660, 520)
+        self.window.geometry("680x560")
+        self.window.minsize(620, 520)
         self.window.resizable(True, True)
         self.window.transient(root)
         self.window.grab_set()
@@ -2628,6 +2792,24 @@ class SettingsWindow:
             variable=self.profile_gender_var,
             style="Settings.TRadiobutton",
         ).pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(profile_frame, text="Cat").grid(row=4, column=0, sticky=tk.W, pady=(8, 0))
+        category_row = ttk.Frame(profile_frame)
+        category_row.grid(row=4, column=1, sticky=tk.W, padx=(2, 0), pady=(8, 0))
+        ttk.Combobox(
+            category_row,
+            textvariable=self.profile_category_var,
+            values=["None", "A", "B", "C", "D"],
+            width=8,
+            state="readonly",
+            style="Settings.TCombobox",
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            category_row,
+            text="\u2139",
+            width=2,
+            style="Settings.TButton",
+            command=self._show_category_limits_info,
+        ).pack(side=tk.LEFT, padx=(6, 0))
 
         controls_frame = ttk.Frame(top_frame)
         controls_frame.grid(row=0, column=2, columnspan=2, sticky=tk.NSEW)
@@ -2752,6 +2934,13 @@ class SettingsWindow:
             state="readonly",
         )
         self.adjusted_wkg_percent_combo.pack(side=tk.LEFT, padx=(8, 0))
+        self.show_wkg_warnings_checkbutton = ttk.Checkbutton(
+            visible_fields_frame,
+            text="Show W/kg warnings",
+            variable=self.show_wkg_warnings_var,
+            style="Settings.TCheckbutton",
+        )
+        self.show_wkg_warnings_checkbutton.pack(anchor=tk.W, pady=(6, 0))
 
         appearance_frame = ttk.LabelFrame(right_col, text="Appearance", padding=8)
         appearance_frame.pack(fill=tk.X)
@@ -2791,6 +2980,7 @@ class SettingsWindow:
         self._configure_settings_styles()
         self._apply_settings_styles(self.window)
         self._toggle_adjusted_wkg_controls()
+        self._toggle_wkg_warning_controls()
         self._bind_change_tracking()
         self._saved_snapshot = self._settings_snapshot()
         self._refresh_save_button_state()
@@ -2848,6 +3038,11 @@ class SettingsWindow:
             if self.profile_gender_var.get() in {"male", "female"}
             else "male"
         )
+        self.config.profile_category = (
+            str(self.profile_category_var.get()).strip().upper()
+            if str(self.profile_category_var.get()).strip().upper() in {"NONE", "A", "B", "C", "D"}
+            else "NONE"
+        )
         self.config.always_on_top = self.topmost_var.get()
         self.config.power_display_seconds = power_display_seconds
         self.config.wkg_decimals = wkg_decimals
@@ -2862,6 +3057,7 @@ class SettingsWindow:
         self.config.show_avg_speed = self.show_avg_speed_var.get()
         self.config.show_adjusted_wkg_column = self.show_adjusted_wkg_column_var.get()
         self.config.adjusted_wkg_percent = adjusted_wkg_percent
+        self.config.show_wkg_warnings = self.show_wkg_warnings_var.get() and self._has_selected_category()
         self.config.inactive_background = self.inactive_background_var.get().strip() or "#f3f3f3"
         self.on_save()
         self._saved_snapshot = self._settings_snapshot()
@@ -2875,8 +3071,13 @@ class SettingsWindow:
         self.save(close_window=close_window)
 
     def _ui_scale_changed_since_last_save(self) -> bool:
-        saved_scale = int(self._saved_snapshot[7])
-        return int(self.ui_scale_var.get()) != saved_scale
+        saved_scale = self.config.ui_scale_percent
+        try:
+            if isinstance(self._saved_snapshot, tuple) and len(self._saved_snapshot) > 9:
+                saved_scale = int(self._saved_snapshot[9])
+        except (TypeError, ValueError):
+            saved_scale = self.config.ui_scale_percent
+        return int(self.ui_scale_var.get()) != int(saved_scale)
 
     def pick_color(self, variable: tk.StringVar) -> None:
         chosen = colorchooser.askcolor(color=variable.get(), parent=self.window, title="Choose background color")
@@ -2897,11 +3098,13 @@ class SettingsWindow:
         self._on_ui_scale_change("")
 
     def _bind_change_tracking(self) -> None:
+        self.profile_category_var.trace_add("write", self._on_profile_category_changed)
         tracked_vars: list[tk.Variable] = [
             self.weight_var,
             self.profile_name_var,
             self.profile_email_var,
             self.profile_gender_var,
+            self.profile_category_var,
             self.topmost_var,
             self.power_display_var,
             self.wkg_decimals_var,
@@ -2913,6 +3116,7 @@ class SettingsWindow:
             self.show_avg_hr_var,
             self.show_avg_speed_var,
             self.show_adjusted_wkg_column_var,
+            self.show_wkg_warnings_var,
             self.adjusted_wkg_percent_var,
             self.inactive_background_var,
             *self.avg_power_preset_vars.values(),
@@ -2922,6 +3126,12 @@ class SettingsWindow:
 
     def _on_settings_field_changed(self, *_args: object) -> None:
         self._refresh_save_button_state()
+
+    def _on_profile_category_changed(self, *_args: object) -> None:
+        self._toggle_wkg_warning_controls()
+
+    def _has_selected_category(self) -> bool:
+        return str(self.profile_category_var.get()).strip().upper() in {"A", "B", "C", "D"}
 
     def _settings_snapshot(self) -> tuple[object, ...]:
         preset_flags = tuple(
@@ -2933,6 +3143,7 @@ class SettingsWindow:
             self.profile_name_var.get(),
             self.profile_email_var.get(),
             self.profile_gender_var.get(),
+            self.profile_category_var.get(),
             bool(self.topmost_var.get()),
             self.power_display_var.get(),
             self.wkg_decimals_var.get(),
@@ -2944,6 +3155,7 @@ class SettingsWindow:
             bool(self.show_avg_hr_var.get()),
             bool(self.show_avg_speed_var.get()),
             bool(self.show_adjusted_wkg_column_var.get()),
+            bool(self.show_wkg_warnings_var.get()),
             self.adjusted_wkg_percent_var.get(),
             self.inactive_background_var.get(),
             preset_flags,
@@ -3025,6 +3237,62 @@ class SettingsWindow:
         state = "readonly" if self.show_adjusted_wkg_column_var.get() else "disabled"
         self.adjusted_wkg_percent_combo.configure(state=state)
 
+    def _toggle_wkg_warning_controls(self) -> None:
+        has_category = self._has_selected_category()
+        if not has_category and self.show_wkg_warnings_var.get():
+            self.show_wkg_warnings_var.set(False)
+        state = "normal" if has_category else "disabled"
+        self.show_wkg_warnings_checkbutton.configure(state=state)
+
+    def _show_category_limits_info(self) -> None:
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Category limits")
+        dialog.transient(self.window)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        heading_font = tkfont.Font(family="Segoe UI", size=10, weight="bold")
+        table_header_font = tkfont.Font(family="Segoe UI", size=9, weight="bold")
+        ttk.Label(
+            frame,
+            text="W/kg limits for best 5 min and best 20 min in a session.",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W)
+
+        sections = ttk.Frame(frame)
+        sections.pack(fill=tk.X, pady=(10, 6))
+
+        for idx, gender in enumerate(("male", "female")):
+            section = ttk.LabelFrame(sections, text="", padding=8)
+            section.grid(row=0, column=idx, sticky=tk.NW, padx=(0, 10) if idx == 0 else (0, 0))
+            ttk.Label(
+                section,
+                text="Male" if gender == "male" else "Female",
+                font=heading_font,
+            ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 4))
+            ttk.Label(section, text="Cat", width=6, font=table_header_font).grid(row=1, column=0, sticky=tk.W)
+            ttk.Label(section, text="5 min", width=8, font=table_header_font).grid(row=1, column=1, sticky=tk.W)
+            ttk.Label(section, text="20 min", width=8, font=table_header_font).grid(row=1, column=2, sticky=tk.W)
+
+            for row, category in enumerate(("A", "B", "C", "D"), start=2):
+                limit_5m, limit_20m = WKG_WARNING_LIMITS[gender][category]
+                ttk.Label(section, text=category, width=6).grid(row=row, column=0, sticky=tk.W)
+                ttk.Label(section, text="No limit" if limit_5m is None else str(limit_5m), width=8).grid(
+                    row=row, column=1, sticky=tk.W
+                )
+                ttk.Label(section, text="No limit" if limit_20m is None else str(limit_20m), width=8).grid(
+                    row=row, column=2, sticky=tk.W
+                )
+
+        ttk.Label(
+            frame,
+            text="Session AVG uses the same limit as 20 min.",
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(4, 0))
+        ttk.Button(frame, text="Close", command=dialog.destroy, style="Settings.TButton").pack(anchor=tk.E, pady=(10, 0))
+
     def confirm_reset_defaults(self) -> None:
         confirmed = self._confirm_reset_settings()
         if not confirmed:
@@ -3040,6 +3308,7 @@ class SettingsWindow:
         self.profile_name_var.set("")
         self.profile_email_var.set("")
         self.profile_gender_var.set("male")
+        self.profile_category_var.set("None")
         self.topmost_var.set(True)
         self.power_display_var.set("3s")
         self.wkg_decimals_var.set("1")
@@ -3052,9 +3321,10 @@ class SettingsWindow:
         self.custom_avg_seconds_var.set("0")
         self.show_session_avg_power_var.set(True)
         self.show_avg_hr_var.set(True)
-        self.show_avg_speed_var.set(True)
+        self.show_avg_speed_var.set(False)
         self.show_adjusted_wkg_column_var.set(False)
-        self.adjusted_wkg_percent_var.set("90%")
+        self.show_wkg_warnings_var.set(False)
+        self.adjusted_wkg_percent_var.set("95%")
         self._toggle_adjusted_wkg_controls()
         self.inactive_background_var.set("#f3f3f3")
 
@@ -3213,9 +3483,6 @@ class EmailContactWindow:
         ttk.Button(buttons, text="Close", command=self.window.destroy).pack(side=tk.LEFT, padx=(8, 0))
 
     def send_email(self) -> None:
-        if not CONTACT_EMAIL:
-            messagebox.showinfo("Email", "Support email is not configured.", parent=self.window)
-            return
         sender_email = self.email_var.get().strip()
         sender_name = self.name_var.get().strip()
         message = self.message_text.get("1.0", tk.END).strip()
@@ -3250,7 +3517,7 @@ class EmailContactWindow:
         ]
         body = "\n".join(body_parts)
         smtp_config = self._resolve_smtp_config()
-        if smtp_config is not None:
+        if smtp_config is not None and CONTACT_EMAIL:
             self._send_via_smtp_async(subject, body, sender_email, smtp_config)
             return
 
@@ -3359,16 +3626,17 @@ class EmailContactWindow:
         if opened:
             return
 
+        manual_target = f"\nSend manually to: {CONTACT_EMAIL}" if CONTACT_EMAIL else ""
         messagebox.showwarning(
             "Email",
-            f"Could not open email client.\nSend manually to: {CONTACT_EMAIL}",
+            f"Could not open email client.{manual_target}",
             parent=self.window,
         )
 
     @staticmethod
     def _build_webmail_compose_target(sender_email: str, subject: str, body: str) -> tuple[str, str | None]:
         domain = sender_email.split("@")[-1].lower()
-        encoded_to = quote(CONTACT_EMAIL)
+        encoded_to = quote(CONTACT_EMAIL) if CONTACT_EMAIL else ""
         encoded_subject = quote(subject)
         encoded_body = quote(body)
 
@@ -3387,6 +3655,10 @@ class EmailContactWindow:
                 "https://compose.mail.yahoo.com/"
                 f"?to={encoded_to}&subject={encoded_subject}&body={encoded_body}"
             )
+        if domain in {"icloud.com", "me.com", "mac.com"}:
+            return "iCloud Mail", "https://www.icloud.com/mail/"
+        if domain in {"proton.me", "protonmail.com"}:
+            return "Proton Mail", "https://mail.proton.me/u/0/inbox"
         return "your default mail app", None
 
     @staticmethod
@@ -3408,7 +3680,7 @@ class EmailContactWindow:
         frame.pack(fill=tk.BOTH, expand=True)
         ttk.Label(
             frame,
-            text=f"You will be redirected to {target_label}.\nAre you sure?",
+            text=f"You will be redirected to {target_label} to continue with your email.\nAre you sure?",
             justify=tk.LEFT,
         ).pack(anchor=tk.W)
 
