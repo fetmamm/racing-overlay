@@ -29,6 +29,7 @@ jobs:
 
             const branch = context.ref.replace("refs/heads/", "");
             const commits = context.payload.commits || [];
+            const headCommit = context.payload.head_commit || null;
             const shown = commits.slice(0, 5);
             const lines = shown.map((c) => {
               const sha = (c.id || "").slice(0, 7);
@@ -59,6 +60,10 @@ jobs:
 
             const compareUrl = context.payload.compare || "";
             const repoName = `${context.repo.owner}/${context.repo.repo}`;
+            const headMessage = (headCommit?.message || "").trim();
+            const messageLines = headMessage ? headMessage.split("\n") : [];
+            const summaryText = messageLines.length ? messageLines[0] : "(none)";
+            const descriptionText = messageLines.slice(1).join("\n").trim() || "(none)";
             const contentParts = [
               "A new change has been made!",
               "",
@@ -67,6 +72,12 @@ jobs:
               `Repo: \`${repoName}\``,
               `Pusher: **${context.actor}**`,
               `Commits: **${commits.length}**`,
+              "",
+              "Summary:",
+              summaryText,
+              "",
+              "Description:",
+              descriptionText,
             ];
             if (lines.length) {
               contentParts.push("", ...lines);
