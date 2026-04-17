@@ -1,0 +1,47 @@
+name: Build Zwift Overlay EXE
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-exe:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build/runtime dependencies
+        shell: powershell
+        run: |
+          py -3 -m pip install --upgrade pip
+          py -3 -m pip install pyinstaller bleak openant pyusb
+
+      - name: Build Zwift Overlay.exe
+        shell: powershell
+        run: |
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+          if (Test-Path dist) { Remove-Item -Recurse -Force dist }
+          py -3 -m PyInstaller --noconfirm --clean --onefile --windowed --name "Zwift Overlay" --add-data ".version_state.json;." app.py
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zwift-Overlay-exe
+          path: dist/Zwift Overlay.exe
+
+      - name: Publish EXE to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Zwift Overlay.exe

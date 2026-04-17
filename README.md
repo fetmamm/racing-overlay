@@ -128,3 +128,22 @@ Jag har byggt en stabil grund som fungerar utan externa bibliotek. För att läs
 - Bluetooth
 - ANT+
 - eller en kombination där sensorer är primär källa och OCR är reserv
+
+## EXE for anvandare
+
+For anvandare som inte vill installera Python:
+
+1. Oppna repo -> `Releases`.
+2. Ladda ner `Zwift Overlay.exe`.
+3. Dubbelklicka pa filen for att starta programmet.
+
+## Bygg EXE i GitHub
+
+Projektet innehaller en GitHub Action i:
+
+- `.github/workflows/release-windows.yml`
+
+Nar du pushar en tagg som borjar med `v` (t.ex. `v0.3.7`) bygger workflowen en portable:
+
+- `Zwift Overlay.exe`
+
